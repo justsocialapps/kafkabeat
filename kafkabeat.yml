@@ -5,10 +5,20 @@
 kafkabeat:
     # a list of Kafka brokers to connect to
     brokers: ["localhost:9092"]
+
     # A list of topics to subscribe to
     topics: ["tracking"]
+
     # The consumer group to join
     group: "kafkabeat"
+
+    # Codec used to deserialize kafka event, "plain" or "json".
+    # Defaults to plain.
+    #codec: "plain"
+
+    # Kafka Offset handling, "newest" or "oldest".
+    # Defaults to "newest"
+    #offset: "newest"
 
 #================================ General =====================================
 
@@ -40,7 +50,7 @@ kafkabeat:
 
 #============================== Kibana =====================================
 
-# Starting with Beats version 6.0.0, the dashboards are loaded via the Kibana API. 
+# Starting with Beats version 6.0.0, the dashboards are loaded via the Kibana API.
 # This requires a Kibana endpoint configuration.
 setup.kibana:
 
