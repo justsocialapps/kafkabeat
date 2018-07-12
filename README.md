@@ -41,10 +41,20 @@ parameters are specific to Kafkabeat:
 kafkabeat:
     # a list of Kafka brokers to connect to
     brokers: ["localhost:9092"]
+
     # A list of topics to subscribe to
     topics: ["tracking"]
+
     # The consumer group to join
     group: "kafkabeat"
+
+    # Codec used to deserialize kafka event, "plain" or "json".
+    # Defaults to plain.
+    #codec: "plain"
+
+    # Kafka Offset handling, "newest" or "oldest".
+    # Defaults to "newest"
+    #offset: "newest"
 ```
 
 ### Testing
