@@ -1,8 +1,26 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package logstash
 
 import (
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/outputs/transport"
@@ -12,29 +30,34 @@ import (
 
 type syncClient struct {
 	*transport.Client
-	client *v2.SyncClient
-	stats  *outputs.Stats
-	win    window
-	ttl    time.Duration
-	ticker *time.Ticker
+	client   *v2.SyncClient
+	observer outputs.Observer
+	win      *window
+	ttl      time.Duration
+	ticker   *time.Ticker
 }
 
 func newSyncClient(
+	beat beat.Info,
 	conn *transport.Client,
-	stats *outputs.Stats,
+	observer outputs.Observer,
 	config *Config,
 ) (*syncClient, error) {
-	c := &syncClient{}
-	c.Client = conn
-	c.ttl = config.TTL
-	c.stats = stats
-	c.win.init(defaultStartMaxWindowSize, config.BulkMaxSize)
+	c := &syncClient{
+		Client:   conn,
+		observer: observer,
+		ttl:      config.TTL,
+	}
+
+	if config.SlowStart {
+		c.win = newWindower(defaultStartMaxWindowSize, config.BulkMaxSize)
+	}
 	if c.ttl > 0 {
 		c.ticker = time.NewTicker(c.ttl)
 	}
 
 	var err error
-	enc := makeLogstashEventEncoder(config.Index)
+	enc := makeLogstashEventEncoder(beat, config.EscapeHTML, config.Index)
 	c.client, err = v2.NewSyncClientWithConn(conn,
 		v2.JSONEncoder(enc),
 		v2.Timeout(config.Timeout),
@@ -70,14 +93,14 @@ func (c *syncClient) Close() error {
 
 func (c *syncClient) reconnect() error {
 	if err := c.Client.Close(); err != nil {
-		logp.Err("error closing connection to logstash: %s, reconnecting...", err)
+		logp.Err("error closing connection to logstash host %s: %s, reconnecting...", c.Host(), err)
 	}
 	return c.Client.Connect()
 }
 
 func (c *syncClient) Publish(batch publisher.Batch) error {
 	events := batch.Events()
-	st := c.stats
+	st := c.observer
 
 	st.NewBatch(len(events))
 
@@ -95,24 +118,38 @@ func (c *syncClient) Publish(batch publisher.Batch) error {
 					batch.Retry()
 					return err
 				}
+
 				// reset window size on reconnect
-				c.win.windowSize = int32(defaultStartMaxWindowSize)
+				if c.win != nil {
+					c.win.windowSize = int32(defaultStartMaxWindowSize)
+				}
 			default:
 			}
 		}
 
-		n, err := c.publishWindowed(events)
+		var (
+			n   int
+			err error
+		)
+
+		if c.win == nil {
+			n, err = c.sendEvents(events)
+		} else {
+			n, err = c.publishWindowed(events)
+		}
+
+		debugf("%v events out of %v events sent to logstash host %s. Continue sending",
+			n, len(events), c.Host())
+
 		events = events[n:]
 		st.Acked(n)
-
-		debugf("%v events out of %v events sent to logstash. Continue sending",
-			n, len(events))
-
 		if err != nil {
 			// return batch to pipeline before reporting/counting error
 			batch.RetryEvents(events)
 
-			c.win.shrinkWindow()
+			if c.win != nil {
+				c.win.shrinkWindow()
+			}
 			_ = c.Close()
 
 			logp.Err("Failed to publish events caused by: %v", err)
@@ -131,8 +168,8 @@ func (c *syncClient) Publish(batch publisher.Batch) error {
 func (c *syncClient) publishWindowed(events []publisher.Event) (int, error) {
 	batchSize := len(events)
 	windowSize := c.win.get()
-	debugf("Try to publish %v events to logstash with window size %v",
-		batchSize, windowSize)
+	debugf("Try to publish %v events to logstash host %s with window size %v",
+		batchSize, c.Host(), windowSize)
 
 	// prepare message payload
 	if batchSize > windowSize {

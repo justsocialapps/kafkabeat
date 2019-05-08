@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package common
 
 import (
@@ -9,9 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elastic/beats/libbeat/logp"
-
 	"github.com/pkg/errors"
+
+	"github.com/elastic/beats/libbeat/logp"
 )
 
 const eventDebugSelector = "event"
@@ -152,8 +169,10 @@ func normalizeValue(value interface{}, keys ...string) (interface{}, []error) {
 	case []int, []int8, []int16, []int32, []int64:
 	case uint, uint8, uint16, uint32, uint64:
 	case []uint, []uint8, []uint16, []uint32, []uint64:
-	case float32, float64:
+	case float64:
 		return Float(value.(float64)), nil
+	case float32:
+		return Float(value.(float32)), nil
 	case []float32, []float64:
 	case complex64, complex128:
 	case []complex64, []complex128:
@@ -249,4 +268,37 @@ func joinKeys(keys ...string) string {
 // Defines the marshal of the Float type
 func (f Float) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("%.6f", f)), nil
+}
+
+// DeDot a string by replacing all . with _
+// This helps when sending data to Elasticsearch to prevent object and key collisions.
+func DeDot(s string) string {
+	return strings.Replace(s, ".", "_", -1)
+}
+
+// DeDotJSON replaces in keys all . with _
+// This helps when sending data to Elasticsearch to prevent object and key collisions.
+func DeDotJSON(json interface{}) interface{} {
+	switch json := json.(type) {
+	case map[string]interface{}:
+		result := map[string]interface{}{}
+		for key, value := range json {
+			result[DeDot(key)] = DeDotJSON(value)
+		}
+		return result
+	case MapStr:
+		result := MapStr{}
+		for key, value := range json {
+			result[DeDot(key)] = DeDotJSON(value)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(json))
+		for i, value := range json {
+			result[i] = DeDotJSON(value)
+		}
+		return result
+	default:
+		return json
+	}
 }

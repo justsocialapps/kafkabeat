@@ -124,6 +124,10 @@ packetbeat.protocols:
   # This option indicates which Operator/Operators will be ignored.
   #ignored_ops: ["SUPPORTED","OPTIONS"]
 
+- type: dhcpv4
+  # Configure the DHCP for IPv4 ports.
+  ports: [67, 68]
+
 - type: dns
   # Enable DNS monitoring. Default: true
   #enabled: true
@@ -179,8 +183,17 @@ packetbeat.protocols:
   #send_all_headers: false
 
   # The list of content types for which Packetbeat includes the full HTTP
-  # payload in the response field.
+  # payload. If the request's or response's Content-Type matches any on this
+  # list, the full body will be included under the request or response field.
   #include_body_for: []
+
+  # The list of content types for which Packetbeat includes the full HTTP
+  # request payload.
+  #include_request_body_for: []
+
+  # The list of content types for which Packetbeat includes the full HTTP
+  # response payload.
+  #include_response_body_for: []
 
   # If the Cookie or Set-Cookie headers are sent, this option controls whether
   # they are split into individual values.
@@ -420,6 +433,22 @@ packetbeat.protocols:
   # Transaction timeout. Expired transactions will no longer be correlated to
   # incoming responses, but sent to Elasticsearch immediately.
   #transaction_timeout: 10s
+
+- type: tls
+  # Enable TLS monitoring. Default: true
+  #enabled: true
+
+  # Configure the ports where to listen for TLS traffic. You can disable
+  # the TLS protocol by commenting out the list of ports.
+  ports: [443]
+
+  # If this option is enabled, the client and server certificates and
+  # certificate chains are sent to Elasticsearch. The default is true.
+  #send_certificates: true
+
+  # If this option is enabled, the raw certificates will be stored
+  # in PEM format under the `raw` key. The default is false.
+  #include_raw_certificates: false
 
 #=========================== Monitored processes ==============================
 

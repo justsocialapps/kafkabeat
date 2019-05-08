@@ -1,10 +1,10 @@
 - key: prometheus
   title: "Prometheus"
   description: >
-    beta[]
-    
     Stats collected from Prometheus.
   short_config: false
+  release: ga
+  settings: ["ssl", "http"]
   fields:
     - name: prometheus
       type: group

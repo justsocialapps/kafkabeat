@@ -1,133 +1,209 @@
 {
-    "@timestamp": "2016-05-23T08:05:34.853Z",
-    "beat": {
-        "hostname": "host.example.com",
-        "name": "host.example.com"
-    },
-    "metricset": {
-        "host": "mongodb:27017",
-        "module": "mongodb",
-        "name": "status",
-        "rtt": 115
-    },
-    "mongodb": {
-        "status": {
-            "asserts": {
-                "msg": 0,
-                "regular": 0,
-                "rollovers": 0,
-                "user": 0,
-                "warning": 0
-            },
-            "background_flushing": {
-                "average": {
-                    "ms": 16
+	"@timestamp": "2017-10-12T08:05:34.853Z",
+	"beat": {
+		"hostname": "host.example.com",
+		"name": "host.example.com"
+	},
+	"metricset": {
+		"host": "mongodb:27017",
+		"module": "mongodb",
+		"name": "status",
+		"rtt": 115
+	},
+	"mongodb": {
+		"status": {
+			"version": "3.4.7",
+			"ops": {
+				"latencies": {
+					"writes": {
+						"latency": 0,
+						"count": 0
+					},
+					"commands": {
+						"latency": 439756604,
+						"count": 7607434
+					},
+					"reads": {
+						"count": 19245,
+						"latency": 5504505
+					}
+				},
+				"counters": {
+					"update": 0,
+					"delete": 0,
+					"getmore": 14,
+					"command": 7607435,
+					"insert": 0,
+					"query": 19200
+				},
+				"replicated": {
+					"query": 0,
+					"update": 0,
+					"delete": 0,
+					"getmore": 0,
+					"command": 0,
+					"insert": 0
+				}
+			},
+			"uptime": {
+				"ms": 4909716080
+			},
+			"asserts": {
+				"warning": 0,
+				"msg": 0,
+				"user": 32,
+				"rollovers": 0,
+				"regular": 0
+			},
+			"local_time": "2018-07-17T18:31:45.823Z",
+			"global_lock": {
+				"total_time": {
+                    "us": 4909712143000
                 },
-                "flushes": 37,
-                "last": {
-                    "ms": 18
-                },
-                "last_finished": "2016-09-06T07:32:58.228Z",
-                "total": {
-                    "ms": 624
-                }
-            },
-            "connections": {
-                "available": 838859,
-                "current": 1,
-                "total_created": 10
-            },
-            "extra_info": {
-                "heap_usage": {
-                    "bytes": 62895448
-                },
-                "page_faults": 71
-            },
-            "journaling": {
-                "commits": 1,
-                "commits_in_write_lock": 0,
-                "compression": 0,
-                "early_commits": 0,
-                "journaled": {
-                    "mb": 0
-                },
-                "times": {
-                    "commits": {
-                        "ms": 0
-                    },
-                    "commits_in_write_lock": {
-                        "ms": 0
-                    },
-                    "dt": {
-                        "ms": 0
-                    },
-                    "prep_log_buffer": {
-                        "ms": 0
-                    },
-                    "remap_private_view": {
-                        "ms": 0
-                    },
-                    "write_to_data_files": {
-                        "ms": 0
-                    },
-                    "write_to_journal": {
-                        "ms": 0
-                    }
-                },
-                "write_to_data_files": {
-                    "mb": 0
-                }
-            },
-            "local_time": "2016-09-06T07:33:15.546Z",
-            "memory": {
-                "bits": 64,
-                "mapped": {
-                    "mb": 80
-                },
-                "mapped_with_journal": {
-                    "mb": 160
-                },
-                "resident": {
-                    "mb": 57
-                },
-                "virtual": {
-                    "mb": 356
-                }
-            },
-            "network": {
-                "in": {
-                    "bytes": 2258
-                },
-                "out": {
-                    "bytes": 93486
-                },
-                "requests": 39
-            },
-            "opcounters": {
-                "command": 40,
-                "delete": 0,
-                "getmore": 0,
-                "insert": 0,
-                "query": 1,
-                "update": 0
-            },
-            "opcounters_replicated": {
-                "command": 0,
-                "delete": 0,
-                "getmore": 0,
-                "insert": 0,
-                "query": 0,
-                "update": 0
-            },
-            "storage_engine": {
-                "name": "mmapv1"
-            },
-            "uptime": {
-                "ms": 45828938
-            },
-            "version": "3.0.12",
-            "write_backs_queued": false
-        }
-    },
-    "type": "metricsets"
+				"current_queue": {
+					"total": 0,
+					"readers": 0,
+					"writers": 0
+				},
+				"active_clients": {
+					"readers": 0,
+					"writers": 0,
+					"total": 19
+				}
+			},
+			"network": {
+				"out": {
+					"bytes": 5137630772
+				},
+				"requests": 15253359,
+				"in": {
+					"bytes": 973355182
+				}
+			},
+			"locks": {
+				"oplog": {
+					"acquire": {
+						"count": {
+							"r": 4909608
+						}
+					},
+					"wait": {},
+					"deadlock": {}
+				},
+				"global": {
+					"wait": {},
+					"deadlock": {},
+					"acquire": {
+						"count": {
+							"w": 22,
+							"W": 2,
+							"r": 17350359
+						}
+					}
+				},
+				"database": {
+					"wait": {},
+					"deadlock": {},
+					"acquire": {
+						"count": {
+							"R": 21447,
+							"W": 22,
+							"r": 11087051
+						}
+					}
+				},
+				"collection": {
+					"wait": {},
+					"deadlock": {},
+					"acquire": {
+						"count": {
+							"r": 6155983
+						}
+					}
+				},
+				"meta_data": {
+					"acquire": {
+						"count": {
+							"w": 1
+						}
+					},
+					"wait": {},
+					"deadlock": {}
+				}
+			},
+			"wired_tiger": {
+				"cache": {
+					"maximum": {
+						"bytes": 1534066688
+					},
+					"used": {
+						"bytes": 65472
+					},
+					"dirty": {
+						"bytes": 0
+					},
+					"pages": {
+						"write": 63,
+						"evicted": 0,
+						"read": 18
+					}
+				},
+				"log": {
+					"syncs": 38,
+					"size": {
+						"bytes": 33554432
+					},
+					"write": {
+						"bytes": 15104
+					},
+					"max_file_size": {
+						"bytes": 104857600
+					},
+					"flushes": 49022011,
+					"writes": 47,
+					"scans": 5
+				},
+				"concurrent_transactions": {
+					"write": {
+						"available": 128,
+						"total_tickets": 128,
+						"out": 0
+					},
+					"read": {
+						"available": 128,
+						"total_tickets": 128,
+						"out": 0
+					}
+				}
+			},
+			"storage_engine": {
+				"name": "wiredTiger"
+			},
+			"process": "mongod",
+			"memory": {
+				"mapped": {
+					"mb": 0
+				},
+				"mapped_with_journal": {
+					"mb": 0
+				},
+				"bits": 64,
+				"resident": {
+					"mb": 21
+				},
+				"virtual": {
+					"mb": 1024
+				}
+			},
+			"connections": {
+				"total_created": 66310,
+				"current": 11,
+				"available": 51189
+			},
+			"extra_info": {
+				"page_faults": 1197,
+				"heap_usage": {}
+			}
+		}
+	}
 }

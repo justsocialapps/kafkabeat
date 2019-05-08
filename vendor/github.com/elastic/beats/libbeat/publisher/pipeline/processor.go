@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package pipeline
 
 import (
@@ -5,11 +22,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs/codec/json"
 	"github.com/elastic/beats/libbeat/processors"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 type program struct {
@@ -29,73 +46,90 @@ type processorFn struct {
 //
 // Pipeline (C=client, P=pipeline)
 //
-// 1. (P) extract EventMetadataKey fields + tags (to be removed in favor of 4)
-// 2. (P) generalize/normalize event
-// 3. (P) add beats metadata (name, hostname, version)
-// 4. (C) add Meta from client Config to event.Meta
-// 5. (C) add Fields from client config to event.Fields
-// 6. (P) add pipeline fields + tags
-// 7. (C) add client fields + tags
-// 8. (P/C) apply EventMetadataKey fields + tags (to be removed in favor of 4)
-// 9. (C) client processors list
-// 10. (P) pipeline processors list
-// 11. (P) (if publish/debug enabled) log event
-// 12. (P) (if output disabled) dropEvent
-func (p *Pipeline) newProcessorPipeline(
+//  1. (P) generalize/normalize event
+//  2. (C) add Meta from client Config to event.Meta
+//  3. (C) add Fields from client config to event.Fields
+//  4. (P) add pipeline fields + tags
+//  5. (C) add client fields + tags
+//  6. (C) client processors list
+//  7. (P) add beats metadata
+//  8. (P) pipeline processors list
+//  9. (P) (if publish/debug enabled) log event
+// 10. (P) (if output disabled) dropEvent
+func newProcessorPipeline(
+	info beat.Info,
+	global pipelineProcessors,
 	config beat.ClientConfig,
 ) beat.Processor {
-	processors := &program{title: "processPipeline"}
+	var (
+		// pipeline processors
+		processors = &program{title: "processPipeline"}
 
-	global := p.processors
+		// client fields and metadata
+		clientMeta      = config.Meta
+		localProcessors = makeClientProcessors(config)
+	)
 
-	// setup 1: extract EventMetadataKey fields + tags
-	processors.add(preEventUserAnnotateProcessor)
+	needsCopy := global.alwaysCopy || localProcessors != nil || global.processors != nil
 
-	// setup 2 and 3: generalize/normalize output (P)
-	processors.add(generalizeProcessor)
-	processors.add(global.beatMetaProcessor)
-
-	// setup 4: add Meta from client config
-	if m := config.Meta; len(m) > 0 {
-		processors.add(clientEventMeta(m))
+	if !config.SkipNormalization {
+		// setup 1: generalize/normalize output (P)
+		processors.add(generalizeProcessor)
 	}
 
-	// setup 5: add Fields from client config
-	if m := config.Fields; len(m) > 0 {
-		processors.add(clientEventFields(m))
+	// setup 2: add Meta from client config (C)
+	if m := clientMeta; len(m) > 0 {
+		processors.add(clientEventMeta(m, needsCopy))
 	}
 
-	// setup 6: add event fields + tags (P)
-	processors.add(global.eventMetaProcessor)
-
-	// setup 7: add fields + tags (C)
-	if em := config.EventMetadata; len(em.Fields) > 0 || len(em.Tags) > 0 {
-		processors.add(eventAnnotateProcessor(em))
+	// setup 4, 5: pipeline tags + client tags
+	var tags []string
+	tags = append(tags, global.tags...)
+	tags = append(tags, config.EventMetadata.Tags...)
+	if len(tags) > 0 {
+		processors.add(makeAddTagsProcessor("tags", tags))
 	}
 
-	// setup 8: apply EventMetadata fields + tags
-	processors.add(eventUserAnnotateProcessor)
+	// setup 3, 4, 5: client config fields + pipeline fields + client fields + dyn metadata
+	fields := config.Fields.Clone()
+	fields.DeepUpdate(global.fields.Clone())
+	if em := config.EventMetadata; len(em.Fields) > 0 {
+		common.MergeFields(fields, em.Fields.Clone(), em.FieldsUnderRoot)
+	}
 
-	// setup 9: client processors (C)
-	if procs := config.Processor; procs != nil {
-		if lst := procs.All(); len(lst) > 0 {
+	if len(fields) > 0 {
+		// Enforce a copy of fields if dynamic fields are configured or beats
+		// metadata will be merged into the fields.
+		// With dynamic fields potentially changing at any time, we need to copy,
+		// so we do not change shared structures be accident.
+		fieldsNeedsCopy := needsCopy || config.DynamicFields != nil || fields["beat"] != nil
+		processors.add(makeAddFieldsProcessor("fields", fields, fieldsNeedsCopy))
+	}
 
-			processors.add(&program{
-				title: "client",
-				list:  lst,
-			})
+	if config.DynamicFields != nil {
+		checkCopy := func(m common.MapStr) bool {
+			return needsCopy || hasKey(m, "beat")
 		}
+		processors.add(makeAddDynMetaProcessor("dynamicFields", config.DynamicFields, checkCopy))
 	}
 
-	// setup 10: pipeline processors (P)
+	// setup 5: client processor list
+	processors.add(localProcessors)
+
+	// setup 6: add beats and host metadata
+	if meta := global.builtinMeta; len(meta) > 0 {
+		processors.add(makeAddFieldsProcessor("beatsMeta", meta, needsCopy))
+	}
+
+	// setup 7: pipeline processors list
 	processors.add(global.processors)
 
-	// setup 11: debug print final event (P)
+	// setup 9: debug print final event (P)
 	if logp.IsDebug("publish") {
-		processors.add(debugPrintProcessor())
+		processors.add(debugPrintProcessor(info))
 	}
 
-	// setup 12: drop all events if outputs are disabled
+	// setup 10: drop all events if outputs are disabled (P)
 	if global.disabled {
 		processors.add(dropDisabledProcessor)
 	}
@@ -205,79 +239,68 @@ func eventAnnotateProcessor(eventMeta common.EventMetadata) *processorFn {
 	})
 }
 
-func clientEventMeta(meta common.MapStr) *processorFn {
-	return newAnnotateProcessor("@metadata", func(event *beat.Event) {
-		if event.Meta == nil {
-			event.Meta = meta.Clone()
-		} else {
-			event.Meta = event.Meta.Clone()
-			event.Meta.DeepUpdate(meta.Clone())
-		}
+func clientEventMeta(meta common.MapStr, needsCopy bool) *processorFn {
+	fn := func(event *beat.Event) { addMeta(event, meta) }
+	if needsCopy {
+		fn = func(event *beat.Event) { addMeta(event, meta.Clone()) }
+	}
+	return newAnnotateProcessor("@metadata", fn)
+}
+
+func addMeta(event *beat.Event, meta common.MapStr) {
+	if event.Meta == nil {
+		event.Meta = meta
+	} else {
+		event.Meta.Clone()
+		event.Meta.DeepUpdate(meta)
+	}
+}
+
+func pipelineEventFields(fields common.MapStr, copy bool) *processorFn {
+	return makeAddFieldsProcessor("pipelineFields", fields, copy)
+}
+
+func makeAddTagsProcessor(name string, tags []string) *processorFn {
+	return newAnnotateProcessor(name, func(event *beat.Event) {
+		common.AddTags(event.Fields, tags)
 	})
 }
 
-func clientEventFields(fields common.MapStr) *processorFn {
-	return newAnnotateProcessor("globalFields", func(event *beat.Event) {
-		event.Fields.DeepUpdate(fields.Clone())
+func makeAddFieldsProcessor(name string, fields common.MapStr, copy bool) *processorFn {
+	fn := func(event *beat.Event) { event.Fields.DeepUpdate(fields) }
+	if copy {
+		fn = func(event *beat.Event) { event.Fields.DeepUpdate(fields.Clone()) }
+	}
+
+	return newAnnotateProcessor(name, fn)
+}
+
+func makeAddDynMetaProcessor(
+	name string,
+	meta *common.MapStrPointer,
+	checkCopy func(m common.MapStr) bool,
+) *processorFn {
+	return newAnnotateProcessor(name, func(event *beat.Event) {
+		dynFields := meta.Get()
+		if checkCopy(dynFields) {
+			dynFields = dynFields.Clone()
+		}
+
+		event.Fields.DeepUpdate(dynFields)
 	})
 }
 
-// TODO: remove var-section. Keep for backwards compatibility with old publisher API.
-//       Remove after updating all beats to new publisher API.
-// Note: this functionality is used by filebeat/winlogbeat, so prospector/harvesters
-//       can apply fields to events after generating the event type.
-//       This functionality will be removed, in favor of harvesters publishing
-//       event to a beat.Client with properly setup processor
-var (
-	preEventUserAnnotateProcessor = newAnnotateProcessor("annotateEventUserPre", func(event *beat.Event) {
-		const key = common.EventMetadataKey
-		val, exists := event.Fields[key]
-		if !exists {
-			return
-		}
-
-		delete(event.Fields, key)
-
-		if _, ok := val.(common.EventMetadata); ok {
-			if event.Meta == nil {
-				event.Meta = common.MapStr{}
-			}
-			event.Meta[key] = val
-		}
-	})
-
-	eventUserAnnotateProcessor = newAnnotateProcessor("annotateEventUser", func(event *beat.Event) {
-		const key = common.EventMetadataKey
-
-		tmp, ok := event.Meta[key]
-		if !ok {
-			return
-		}
-
-		delete(event.Meta, key)
-		if len(event.Meta) == 0 {
-			event.Meta = nil
-		}
-
-		eventMeta := tmp.(common.EventMetadata)
-		common.AddTags(event.Fields, eventMeta.Tags)
-		if fields := eventMeta.Fields; len(fields) > 0 {
-			common.MergeFields(event.Fields, fields.Clone(), eventMeta.FieldsUnderRoot)
-		}
-	})
-)
-
-func debugPrintProcessor() *processorFn {
+func debugPrintProcessor(info beat.Info) *processorFn {
 	// ensure only one go-routine is using the encoder (in case
 	// beat.Client is shared between multiple go-routines by accident)
 	var mux sync.Mutex
 
-	encoder := json.New(true)
+	encoder := json.New(true, false, info.Version)
 	return newProcessor("debugPrint", func(event *beat.Event) (*beat.Event, error) {
 		mux.Lock()
 		defer mux.Unlock()
 
-		b, err := encoder.Encode("<not set>", event)
+		b, err := encoder.Encode(info.Beat, event)
 		if err != nil {
 			return event, nil
 		}
@@ -285,4 +308,21 @@ func debugPrintProcessor() *processorFn {
 		logp.Debug("publish", "Publish event: %s", b)
 		return event, nil
 	})
+}
+
+func makeClientProcessors(config beat.ClientConfig) processors.Processor {
+	procs := config.Processor
+	if procs == nil || len(procs.All()) == 0 {
+		return nil
+	}
+
+	return &program{
+		title: "client",
+		list:  procs.All(),
+	}
+}
+
+func hasKey(m common.MapStr, key string) bool {
+	_, exists := m[key]
+	return exists
 }

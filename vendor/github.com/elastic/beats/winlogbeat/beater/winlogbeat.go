@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 /*
 Package beater provides the implementation of the libbeat Beater interface for
 Winlogbeat. The main event loop is implemented in this package.
@@ -5,7 +22,6 @@ Winlogbeat. The main event loop is implemented in this package.
 package beater
 
 import (
-	"expvar"
 	"fmt"
 	"sync"
 	"time"
@@ -14,17 +30,11 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/paths"
-	"github.com/elastic/beats/libbeat/publisher/bc/publisher"
-	pub "github.com/elastic/beats/libbeat/publisher/beat"
 
 	"github.com/elastic/beats/winlogbeat/checkpoint"
 	"github.com/elastic/beats/winlogbeat/config"
 	"github.com/elastic/beats/winlogbeat/eventlog"
 )
-
-func init() {
-	expvar.Publish("uptime", expvar.Func(uptime))
-}
 
 // Debug logging functions for this package.
 var (
@@ -36,35 +46,31 @@ var startTime = time.Now().UTC()
 
 // Winlogbeat is used to conform to the beat interface
 type Winlogbeat struct {
-	beat       *beat.Beat             // Common beat information.
-	config     *config.Settings       // Configuration settings.
-	eventLogs  []*eventLogger         // List of all event logs being monitored.
-	done       chan struct{}          // Channel to initiate shutdown of main event loop.
-	pipeline   publisher.Publisher    // Interface to publish event.
-	checkpoint *checkpoint.Checkpoint // Persists event log state to disk.
+	beat       *beat.Beat              // Common beat information.
+	config     config.WinlogbeatConfig // Configuration settings.
+	eventLogs  []*eventLogger          // List of all event logs being monitored.
+	done       chan struct{}           // Channel to initiate shutdown of main event loop.
+	pipeline   beat.Pipeline           // Interface to publish event.
+	checkpoint *checkpoint.Checkpoint  // Persists event log state to disk.
 }
 
 // New returns a new Winlogbeat.
 func New(b *beat.Beat, _ *common.Config) (beat.Beater, error) {
 	// Read configuration.
-	// XXX: winlogbeat validates top-level config -> ignore beater config and
-	//      parse complete top-level config
 	config := config.DefaultSettings
-	rawConfig := b.RawConfig
-	err := rawConfig.Unpack(&config)
+	err := b.BeatConfig.Unpack(&config)
 	if err != nil {
 		return nil, fmt.Errorf("Error reading configuration file. %v", err)
 	}
 
 	// resolve registry file path
-	config.Winlogbeat.RegistryFile = paths.Resolve(
-		paths.Data, config.Winlogbeat.RegistryFile)
+	config.RegistryFile = paths.Resolve(paths.Data, config.RegistryFile)
 	logp.Info("State will be read from and persisted to %s",
-		config.Winlogbeat.RegistryFile)
+		config.RegistryFile)
 
 	eb := &Winlogbeat{
 		beat:   b,
-		config: &config,
+		config: config,
 		done:   make(chan struct{}),
 	}
 
@@ -76,7 +82,7 @@ func New(b *beat.Beat, _ *common.Config) (beat.Beater, error) {
 }
 
 func (eb *Winlogbeat) init(b *beat.Beat) error {
-	config := &eb.config.Winlogbeat
+	config := &eb.config
 
 	// Create the event logs. This will validate the event log specific
 	// configuration.
@@ -102,7 +108,7 @@ func (eb *Winlogbeat) init(b *beat.Beat) error {
 // Setup uses the loaded config and creates necessary markers and environment
 // settings to allow the beat to be used.
 func (eb *Winlogbeat) setup(b *beat.Beat) error {
-	config := &eb.config.Winlogbeat
+	config := &eb.config
 
 	var err error
 	eb.checkpoint, err = checkpoint.NewCheckpoint(config.RegistryFile, 10, 5*time.Second)
@@ -126,20 +132,12 @@ func (eb *Winlogbeat) Run(b *beat.Beat) error {
 	initMetrics("total")
 
 	// setup global event ACK handler
-	err := eb.pipeline.SetACKHandler(pub.PipelineACKHandler{
-		ACKLastEvents: func(events []pub.Event) {
-			for _, event := range events {
-				priv := event.Private
-				if priv == nil {
-					continue
+	err := eb.pipeline.SetACKHandler(beat.PipelineACKHandler{
+		ACKLastEvents: func(data []interface{}) {
+			for _, datum := range data {
+				if st, ok := datum.(checkpoint.EventLogState); ok {
+					eb.checkpoint.PersistState(st)
 				}
-
-				st, ok := priv.(checkpoint.EventLogState)
-				if !ok {
-					continue
-				}
-
-				eb.checkpoint.PersistState(st)
 			}
 		},
 	})
@@ -176,17 +174,4 @@ func (eb *Winlogbeat) processEventLog(
 ) {
 	defer wg.Done()
 	logger.run(eb.done, eb.pipeline, state)
-}
-
-// uptime returns a map of uptime related metrics.
-func uptime() interface{} {
-	now := time.Now().UTC()
-	uptimeDur := now.Sub(startTime)
-
-	return map[string]interface{}{
-		"start_time":  startTime,
-		"uptime":      uptimeDur.String(),
-		"uptime_ms":   fmt.Sprintf("%d", uptimeDur.Nanoseconds()/int64(time.Microsecond)),
-		"server_time": now,
-	}
 }

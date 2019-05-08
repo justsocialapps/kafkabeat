@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package console
 
 import (
@@ -7,6 +24,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
@@ -16,11 +34,11 @@ import (
 )
 
 type console struct {
-	out    *os.File
-	stats  *outputs.Stats
-	writer *bufio.Writer
-	codec  codec.Codec
-	index  string
+	out      *os.File
+	observer outputs.Observer
+	writer   *bufio.Writer
+	codec    codec.Codec
+	index    string
 }
 
 type consoleEvent struct {
@@ -35,8 +53,8 @@ func init() {
 }
 
 func makeConsole(
-	beat common.BeatInfo,
-	stats *outputs.Stats,
+	beat beat.Info,
+	observer outputs.Observer,
 	cfg *common.Config,
 ) (outputs.Group, error) {
 	config := defaultConfig
@@ -47,16 +65,16 @@ func makeConsole(
 
 	var enc codec.Codec
 	if config.Codec.Namespace.IsSet() {
-		enc, err = codec.CreateEncoder(config.Codec)
+		enc, err = codec.CreateEncoder(beat, config.Codec)
 		if err != nil {
 			return outputs.Fail(err)
 		}
 	} else {
-		enc = json.New(config.Pretty)
+		enc = json.New(config.Pretty, true, beat.Version)
 	}
 
 	index := beat.Beat
-	c, err := newConsole(index, stats, enc)
+	c, err := newConsole(index, observer, enc)
 	if err != nil {
 		return outputs.Fail(fmt.Errorf("console output initialization failed with: %v", err))
 	}
@@ -72,15 +90,15 @@ func makeConsole(
 	return outputs.Success(config.BatchSize, 0, c)
 }
 
-func newConsole(index string, stats *outputs.Stats, codec codec.Codec) (*console, error) {
-	c := &console{out: os.Stdout, codec: codec, stats: stats, index: index}
+func newConsole(index string, observer outputs.Observer, codec codec.Codec) (*console, error) {
+	c := &console{out: os.Stdout, codec: codec, observer: observer, index: index}
 	c.writer = bufio.NewWriterSize(c.out, 8*1024)
 	return c, nil
 }
 
 func (c *console) Close() error { return nil }
 func (c *console) Publish(batch publisher.Batch) error {
-	st := c.stats
+	st := c.observer
 	events := batch.Events()
 	st.NewBatch(len(events))
 
@@ -111,22 +129,23 @@ func (c *console) publishEvent(event *publisher.Event) bool {
 		}
 
 		logp.Critical("Unable to encode event: %v", err)
+		logp.Debug("console", "Failed event: %v", event)
 		return false
 	}
 
 	if err := c.writeBuffer(serializedEvent); err != nil {
-		c.stats.WriteError()
+		c.observer.WriteError(err)
 		logp.Critical("Unable to publish events to console: %v", err)
 		return false
 	}
 
 	if err := c.writeBuffer(nl); err != nil {
-		c.stats.WriteError()
+		c.observer.WriteError(err)
 		logp.Critical("Error when appending newline to event: %v", err)
 		return false
 	}
 
-	c.stats.WriteBytes(len(serializedEvent) + 1)
+	c.observer.WriteBytes(len(serializedEvent) + 1)
 	return true
 }
 
@@ -141,4 +160,8 @@ func (c *console) writeBuffer(buf []byte) error {
 		written += n
 	}
 	return nil
+}
+
+func (c *console) String() string {
+	return "console"
 }

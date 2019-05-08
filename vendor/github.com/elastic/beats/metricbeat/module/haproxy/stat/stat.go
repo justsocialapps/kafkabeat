@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package stat
 
 import (
@@ -19,9 +36,10 @@ var (
 
 // init registers the haproxy stat MetricSet.
 func init() {
-	if err := mb.Registry.AddMetricSet("haproxy", statsMethod, New, haproxy.HostParser); err != nil {
-		panic(err)
-	}
+	mb.Registry.MustAddMetricSet("haproxy", statsMethod, New,
+		mb.WithHostParser(haproxy.HostParser),
+		mb.DefaultMetricSet(),
+	)
 }
 
 // MetricSet for haproxy stats.
@@ -36,9 +54,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 
 // Fetch methods returns a list of stats metrics.
 func (m *MetricSet) Fetch() ([]common.MapStr, error) {
-	// haproxy doesn't accept a username or password so ignore them if they
-	// are in the URL.
-	hapc, err := haproxy.NewHaproxyClient(m.HostData().SanitizedURI)
+	hapc, err := haproxy.NewHaproxyClient(m.HostData().URI)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed creating haproxy client")
 	}

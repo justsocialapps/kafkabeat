@@ -2,6 +2,7 @@
   type: group
   description: >
     Docker container metrics.
+  release: ga
   fields:
     - name: command
       type: keyword
@@ -15,6 +16,10 @@
       type: keyword
       description: >
         Container status.
+    - name: ip_addresses
+      type: keyword
+      description: >
+        Container IP addresses.
     - name: size
       type: group
       description: >

@@ -8,84 +8,156 @@ import (
 	"github.com/Shopify/sarama"
 )
 
+// PartitionConsumer allows code to consume individual partitions from the cluster.
+//
+// See docs for Consumer.Partitions() for more on how to implement this.
+type PartitionConsumer interface {
+	sarama.PartitionConsumer
+
+	// Topic returns the consumed topic name
+	Topic() string
+
+	// Partition returns the consumed partition
+	Partition() int32
+
+	// InitialOffset returns the offset used for creating the PartitionConsumer instance.
+	// The returned offset can be a literal offset, or OffsetNewest, or OffsetOldest
+	InitialOffset() int64
+  
+	// MarkOffset marks the offset of a message as preocessed.
+	MarkOffset(offset int64, metadata string)
+
+	// ResetOffset resets the offset to a previously processed message.
+	ResetOffset(offset int64, metadata string)
+}
+
 type partitionConsumer struct {
-	pcm sarama.PartitionConsumer
+	sarama.PartitionConsumer
 
 	state partitionState
 	mu    sync.Mutex
 
-	closed      bool
+	topic         string
+	partition     int32
+	initialOffset int64
+
+	closeOnce sync.Once
+	closeErr  error
+
 	dying, dead chan none
 }
 
 func newPartitionConsumer(manager sarama.Consumer, topic string, partition int32, info offsetInfo, defaultOffset int64) (*partitionConsumer, error) {
-	pcm, err := manager.ConsumePartition(topic, partition, info.NextOffset(defaultOffset))
+	offset := info.NextOffset(defaultOffset)
+	pcm, err := manager.ConsumePartition(topic, partition, offset)
 
 	// Resume from default offset, if requested offset is out-of-range
 	if err == sarama.ErrOffsetOutOfRange {
 		info.Offset = -1
-		pcm, err = manager.ConsumePartition(topic, partition, defaultOffset)
+		offset = defaultOffset
+		pcm, err = manager.ConsumePartition(topic, partition, offset)
 	}
 	if err != nil {
 		return nil, err
 	}
 
 	return &partitionConsumer{
-		pcm:   pcm,
-		state: partitionState{Info: info},
+		PartitionConsumer: pcm,
+		state:             partitionState{Info: info},
+
+		topic:         topic,
+		partition:     partition,
+		initialOffset: offset,
 
 		dying: make(chan none),
 		dead:  make(chan none),
 	}, nil
 }
 
-func (c *partitionConsumer) Loop(messages chan<- *sarama.ConsumerMessage, errors chan<- error) {
+// Topic implements PartitionConsumer
+func (c *partitionConsumer) Topic() string { return c.topic }
+
+// Partition implements PartitionConsumer
+func (c *partitionConsumer) Partition() int32 { return c.partition }
+
+// InitialOffset implements PartitionConsumer
+func (c *partitionConsumer) InitialOffset() int64 { return c.initialOffset }
+
+// AsyncClose implements PartitionConsumer
+func (c *partitionConsumer) AsyncClose() {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.PartitionConsumer.Close()
+		close(c.dying)
+	})
+}
+
+// Close implements PartitionConsumer
+func (c *partitionConsumer) Close() error {
+	c.AsyncClose()
+	<-c.dead
+	return c.closeErr
+}
+
+func (c *partitionConsumer) waitFor(stopper <-chan none, errors chan<- error) {
 	defer close(c.dead)
 
 	for {
 		select {
-		case msg, ok := <-c.pcm.Messages():
-			if !ok {
-				return
-			}
-			select {
-			case messages <- msg:
-			case <-c.dying:
-				return
-			}
-		case err, ok := <-c.pcm.Errors():
+		case err, ok := <-c.Errors():
 			if !ok {
 				return
 			}
 			select {
 			case errors <- err:
+			case <-stopper:
+				return
 			case <-c.dying:
 				return
 			}
+		case <-stopper:
+			return
 		case <-c.dying:
 			return
 		}
 	}
 }
 
-func (c *partitionConsumer) Close() error {
-	if c.closed {
-		return nil
+func (c *partitionConsumer) multiplex(stopper <-chan none, messages chan<- *sarama.ConsumerMessage, errors chan<- error) {
+	defer close(c.dead)
+
+	for {
+		select {
+		case msg, ok := <-c.Messages():
+			if !ok {
+				return
+			}
+			select {
+			case messages <- msg:
+			case <-stopper:
+				return
+			case <-c.dying:
+				return
+			}
+		case err, ok := <-c.Errors():
+			if !ok {
+				return
+			}
+			select {
+			case errors <- err:
+			case <-stopper:
+				return
+			case <-c.dying:
+				return
+			}
+		case <-stopper:
+			return
+		case <-c.dying:
+			return
+		}
 	}
-
-	err := c.pcm.Close()
-	c.closed = true
-	close(c.dying)
-	<-c.dead
-
-	return err
 }
 
-func (c *partitionConsumer) State() partitionState {
-	if c == nil {
-		return partitionState{}
-	}
-
+func (c *partitionConsumer) getState() partitionState {
 	c.mu.Lock()
 	state := c.state
 	c.mu.Unlock()
@@ -93,11 +165,7 @@ func (c *partitionConsumer) State() partitionState {
 	return state
 }
 
-func (c *partitionConsumer) MarkCommitted(offset int64) {
-	if c == nil {
-		return
-	}
-
+func (c *partitionConsumer) markCommitted(offset int64) {
 	c.mu.Lock()
 	if offset == c.state.Info.Offset {
 		c.state.Dirty = false
@@ -105,14 +173,22 @@ func (c *partitionConsumer) MarkCommitted(offset int64) {
 	c.mu.Unlock()
 }
 
+// MarkOffset implements PartitionConsumer
 func (c *partitionConsumer) MarkOffset(offset int64, metadata string) {
-	if c == nil {
-		return
-	}
-
 	c.mu.Lock()
-	if offset > c.state.Info.Offset {
-		c.state.Info.Offset = offset
+	if next := offset + 1; next > c.state.Info.Offset {
+		c.state.Info.Offset = next
+		c.state.Info.Metadata = metadata
+		c.state.Dirty = true
+	}
+	c.mu.Unlock()
+}
+
+// ResetOffset implements PartitionConsumer
+func (c *partitionConsumer) ResetOffset(offset int64, metadata string) {
+	c.mu.Lock()
+	if next := offset + 1; next <= c.state.Info.Offset {
+		c.state.Info.Offset = next
 		c.state.Info.Metadata = metadata
 		c.state.Dirty = true
 	}
@@ -171,7 +247,7 @@ func (m *partitionMap) Snapshot() map[topicPartition]partitionState {
 
 	snap := make(map[topicPartition]partitionState, len(m.data))
 	for tp, pc := range m.data {
-		snap[tp] = pc.State()
+		snap[tp] = pc.getState()
 	}
 	return snap
 }

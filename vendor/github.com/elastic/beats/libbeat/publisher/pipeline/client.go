@@ -1,24 +1,40 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package pipeline
 
 import (
 	"sync"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common/atomic"
 	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
-	"github.com/elastic/beats/libbeat/publisher/broker"
+	"github.com/elastic/beats/libbeat/publisher/queue"
 )
 
-// client connects a beat with the processors and pipeline broker.
+// client connects a beat with the processors and pipeline queue.
 //
 // TODO: All ackers currently drop any late incoming ACK. Some beats still might
 //       be interested in handling/waiting for event ACKs more globally
 //       -> add support for not dropping pending ACKs
 type client struct {
-	// active connection to broker
 	pipeline   *Pipeline
 	processors beat.Processor
-	producer   broker.Producer
+	producer   queue.Producer
 	mutex      sync.Mutex
 	acker      acker
 
@@ -70,7 +86,7 @@ func (c *client) publish(e beat.Event) {
 		if err != nil {
 			// TODO: introduce dead-letter queue?
 
-			log.Errf("Failed to publish event: %v", err)
+			log.Errorf("Failed to publish event: %v", err)
 		}
 	}
 

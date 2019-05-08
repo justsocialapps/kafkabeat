@@ -1,3 +1,2 @@
-== Windows module
-
-This is the Windows module.
+This is the Windows module. It collects metrics from Windows systems,
+by default metricset `service` is enabled.

@@ -17,43 +17,6 @@ Beats.
 These options are in the `filebeat` namespace.
 
 [float]
-==== `spool_size`
-
-The event count spool threshold. This setting forces a network flush if the number of events in the spooler exceeds
-the specified value.
-
-[source,yaml]
--------------------------------------------------------------------------------------
-filebeat.spool_size: 2048
--------------------------------------------------------------------------------------
-
-See <<load-balancing>> for more information about how this setting affects load balancing.
-
-[float]
-==== `publish_async`
-
-experimental[]
-deprecated[5.3.0]
-
-If enabled, the publisher pipeline in Filebeat operates in async mode preparing
-a new batch of lines while waiting for ACK. This option can improve load-balancing
-throughput at the cost of increased memory usage. The default value is false.
-
-See <<load-balancing>> for more information about how this setting affects load balancing.
-
-[float]
-==== `idle_timeout`
-
-A duration string that specifies how often the spooler is flushed. After the
-`idle_timeout` is reached, the spooler is flushed even if the `spool_size` has not been reached.
-
-[source,yaml]
--------------------------------------------------------------------------------------
-filebeat.idle_timeout: 5s
--------------------------------------------------------------------------------------
-
-
-[float]
 ==== `registry_file`
 
 The name of the registry file. If a relative path is used, it is considered relative to the
@@ -69,14 +32,52 @@ It is not possible to use a symlink as registry file.
 NOTE: The registry file is only updated when new events are flushed and not on a predefined period.
 That means in case there are some states where the TTL expired, these are only removed when new event are processed.
 
+[float]
+==== `registry_file_permissions`
+
+The permissions mask to apply on registry file. The default value is 0600. The permissions option must be a valid Unix-style file permissions mask expressed in octal notation. In Go, numbers in octal notation must start with 0.
+
+This option is not supported on Windows.
+
+Examples:
+
+    0644: give read and write access to the file owner, and read access to all others.
+    0600: give read and write access to the file owner, and no access to all others.
+    0664: give read and write access to the file owner and members of the group associated with the file, as well as read access to all other users.
+
+[source,yaml]
+-------------------------------------------------------------------------------------
+filebeat.registry_file_permissions: 0600
+-------------------------------------------------------------------------------------
+
+[float]
+==== `registry_flush`
+
+
+The timeout value that controls when registry entries are written to disk
+(flushed). When an unwritten update exceeds this value, it triggers a write to
+disk. When registry_flush is set to 0s, the registry is written to disk after
+each batch of events has been published successfully. The default value is 0s.
+
+NOTE: The registry is always updated when Filebeat shuts down normally. After an
+abnormal shutdown, the registry will not be up-to-date if the registry_flush
+value is >0s. Filebeat will send published events again (depending on values in
+the last updated registry file).
+
+NOTE: Filtering out a huge number of logs can cause many registry updates, slowing
+down processing. Setting registry_flush to a value >0s reduces write operations,
+helping Filebeat process more events.
+
 
 [float]
 ==== `config_dir`
 
-The full path to the directory that contains additional prospector configuration files.
+deprecated[6.0.0, Use <<load-input-config>> instead.]
+
+The full path to the directory that contains additional input configuration files.
 Each configuration file must end with `.yml`. Each config file must also specify the full Filebeat
-config hierarchy even though only the prospector part of the file is processed. All global
-options, such as `spool_size`, are ignored.
+config hierarchy even though only the `inputs` part of each file is processed. All global
+options, such as `registry_file`, are ignored.
 
 The `config_dir` option MUST point to a directory other than the directory where the main Filebeat config file resides.
 
@@ -117,5 +118,4 @@ Example configuration:
 filebeat.shutdown_timeout: 5s
 -------------------------------------------------------------------------------------
 
-include::../../libbeat/docs/generalconfig.asciidoc[]
-
+include::{libbeat-dir}/docs/generalconfig.asciidoc[]

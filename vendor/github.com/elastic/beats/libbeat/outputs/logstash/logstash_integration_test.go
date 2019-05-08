@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build integration
 
 package logstash
@@ -12,13 +29,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/common/fmtstr"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
 	"github.com/elastic/beats/libbeat/outputs/outest"
 	"github.com/elastic/beats/libbeat/outputs/outil"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 const (
@@ -41,17 +58,17 @@ type testOutputer struct {
 	*esConnection
 }
 
-type esSoure interface {
+type esSource interface {
 	RefreshIndex()
 }
 
 type esValueReader interface {
-	esSoure
+	esSource
 	Read() ([]map[string]interface{}, error)
 }
 
 type esCountReader interface {
-	esSoure
+	esSource
 	Count() (int, error)
 }
 
@@ -148,19 +165,17 @@ func newTestElasticsearchOutput(t *testing.T, test string) *testOutputer {
 	index := testElasticsearchIndex(test)
 	connection := esConnect(t, index)
 
-	flushInterval := 0
 	bulkSize := 0
 	config, _ := common.NewConfigFrom(map[string]interface{}{
 		"hosts":            []string{getElasticsearchHost()},
 		"index":            connection.index,
-		"flush_interval":   &flushInterval,
 		"bulk_max_size":    &bulkSize,
 		"username":         os.Getenv("ES_USER"),
 		"password":         os.Getenv("ES_PASS"),
 		"template.enabled": false,
 	})
 
-	grp, err := plugin(common.BeatInfo{Beat: "libbeat"}, nil, config)
+	grp, err := plugin(beat.Info{Beat: "libbeat"}, outputs.NewNilObserver(), config)
 	if err != nil {
 		t.Fatalf("init elasticsearch output plugin failed: %v", err)
 	}

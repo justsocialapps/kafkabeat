@@ -1,5 +1,5 @@
 {
-    "@timestamp": "2016-05-23T08:05:34.853Z",
+    "@timestamp": "2017-10-12T08:05:34.853Z",
     "beat": {
         "hostname": "host.example.com",
         "name": "host.example.com"
@@ -11,20 +11,20 @@
     },
     "system": {
         "cpu": {
-            "cores": 8,
+            "cores": 4,
             "idle": {
                 "norm": {
-                    "pct": 0.8851
+                    "pct": 0.4208
                 },
-                "pct": 7.0811,
-                "ticks": 1680102981
+                "pct": 1.6831,
+                "ticks": 207356495
             },
             "iowait": {
                 "norm": {
-                    "pct": 0
+                    "pct": 0.0437
                 },
-                "pct": 0,
-                "ticks": 0
+                "pct": 0.1749,
+                "ticks": 179383
             },
             "irq": {
                 "norm": {
@@ -38,14 +38,14 @@
                     "pct": 0
                 },
                 "pct": 0,
-                "ticks": 0
+                "ticks": 46
             },
             "softirq": {
                 "norm": {
                     "pct": 0
                 },
                 "pct": 0,
-                "ticks": 0
+                "ticks": 8835
             },
             "steal": {
                 "norm": {
@@ -56,17 +56,23 @@
             },
             "system": {
                 "norm": {
-                    "pct": 0.0412
+                    "pct": 0.1749
                 },
-                "pct": 0.3296,
-                "ticks": 42755361
+                "pct": 0.6995,
+                "ticks": 428558
+            },
+            "total": {
+                "norm": {
+                    "pct": 0.5792
+                },
+                "pct": 2.3169
             },
             "user": {
                 "norm": {
-                    "pct": 0.0737
+                    "pct": 0.3607
                 },
-                "pct": 0.5893,
-                "ticks": 50330417
+                "pct": 1.4426,
+                "ticks": 725183
             }
         }
     }

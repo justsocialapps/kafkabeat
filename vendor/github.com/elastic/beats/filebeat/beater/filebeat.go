@@ -1,19 +1,44 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package beater
 
 import (
 	"flag"
 	"fmt"
+	"strings"
 
+	"github.com/elastic/beats/libbeat/common/reload"
+
+	"github.com/joeshaw/multierror"
 	"github.com/pkg/errors"
 
+	"github.com/elastic/beats/libbeat/autodiscover"
 	"github.com/elastic/beats/libbeat/beat"
+	"github.com/elastic/beats/libbeat/cfgfile"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/common/cfgwarn"
+	"github.com/elastic/beats/libbeat/kibana"
 	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/libbeat/management"
 	"github.com/elastic/beats/libbeat/monitoring"
 	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
-	pub "github.com/elastic/beats/libbeat/publisher/beat"
 
+	fbautodiscover "github.com/elastic/beats/filebeat/autodiscover"
 	"github.com/elastic/beats/filebeat/channel"
 	cfg "github.com/elastic/beats/filebeat/config"
 	"github.com/elastic/beats/filebeat/crawler"
@@ -52,7 +77,23 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 		return nil, err
 	}
 
-	moduleRegistry, err := fileset.NewModuleRegistry(config.Modules, b.Info.Version)
+	if len(config.Prospectors) > 0 {
+		cfgwarn.Deprecate("7.0.0", "prospectors are deprecated, Use `inputs` instead.")
+		if len(config.Inputs) > 0 {
+			return nil, fmt.Errorf("prospectors and inputs used in the configuration file, define only inputs not both")
+		}
+		config.Inputs = config.Prospectors
+	}
+
+	if config.ConfigProspector != nil {
+		cfgwarn.Deprecate("7.0.0", "config.prospectors are deprecated, Use `config.inputs` instead.")
+		if config.ConfigInput != nil {
+			return nil, fmt.Errorf("config.prospectors and config.inputs used in the configuration file, define only config.inputs not both")
+		}
+		config.ConfigInput = config.ConfigProspector
+	}
+
+	moduleRegistry, err := fileset.NewModuleRegistry(config.Modules, b.Info.Version, true)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +101,7 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 		logp.Info("Enabled modules/filesets: %s", moduleRegistry.InfoString())
 	}
 
-	moduleProspectors, err := moduleRegistry.GetProspectorConfigs()
+	moduleInputs, err := moduleRegistry.GetInputConfigs()
 	if err != nil {
 		return nil, err
 	}
@@ -69,28 +110,30 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 		return nil, err
 	}
 
-	// Add prospectors created by the modules
-	config.Prospectors = append(config.Prospectors, moduleProspectors...)
+	// Add inputs created by the modules
+	config.Inputs = append(config.Inputs, moduleInputs...)
 
-	haveEnabledProspectors := false
-	for _, prospector := range config.Prospectors {
-		if prospector.Enabled() {
-			haveEnabledProspectors = true
-			break
-		}
+	enabledInputs := config.ListEnabledInputs()
+	var haveEnabledInputs bool
+	if len(enabledInputs) > 0 {
+		haveEnabledInputs = true
 	}
 
-	if !config.ConfigProspector.Enabled() && !config.ConfigModules.Enabled() && !haveEnabledProspectors {
+	if !config.ConfigInput.Enabled() && !config.ConfigModules.Enabled() && !haveEnabledInputs && config.Autodiscover == nil && !b.ConfigManager.Enabled() {
 		if !b.InSetupCmd {
-			return nil, errors.New("No modules or prospectors enabled and configuration reloading disabled. What files do you want me to watch?")
-		} else {
-			// in the `setup` command, log this only as a warning
-			logp.Warn("Setup called, but no modules enabled.")
+			return nil, errors.New("no modules or inputs enabled and configuration reloading disabled. What files do you want me to watch?")
 		}
+
+		// in the `setup` command, log this only as a warning
+		logp.Warn("Setup called, but no modules enabled.")
 	}
 
-	if *once && config.ConfigProspector.Enabled() && config.ConfigModules.Enabled() {
-		return nil, errors.New("prospector configs and -once cannot be used together")
+	if *once && config.ConfigInput.Enabled() && config.ConfigModules.Enabled() {
+		return nil, errors.New("input configs and -once cannot be used together")
+	}
+
+	if config.IsInputEnabled("stdin") && len(enabledInputs) > 1 {
+		return nil, fmt.Errorf("stdin requires to be run in exclusive mode, configured inputs: %s", strings.Join(enabledInputs, ", "))
 	}
 
 	fb := &Filebeat{
@@ -100,12 +143,34 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 	}
 
 	// register `setup` callback for ML jobs
-	if !moduleRegistry.Empty() {
-		b.SetupMLCallback = func(b *beat.Beat) error {
-			return fb.loadModulesML(b)
+	b.SetupMLCallback = func(b *beat.Beat, kibanaConfig *common.Config) error {
+		return fb.loadModulesML(b, kibanaConfig)
+	}
+
+	err = fb.setupPipelineLoaderCallback(b)
+	if err != nil {
+		return nil, err
+	}
+
+	return fb, nil
+}
+
+func (fb *Filebeat) setupPipelineLoaderCallback(b *beat.Beat) error {
+	if !fb.moduleRegistry.Empty() {
+		overwritePipelines := fb.config.OverwritePipelines
+		if b.InSetupCmd {
+			overwritePipelines = true
+		}
+
+		b.OverwritePipelinesCallback = func(esConfig *common.Config) error {
+			esClient, err := elasticsearch.NewConnectedClient(esConfig)
+			if err != nil {
+				return err
+			}
+			return fb.moduleRegistry.LoadPipelines(esClient, overwritePipelines)
 		}
 	}
-	return fb, nil
+	return nil
 }
 
 // loadModulesPipelines is called when modules are configured to do the initial
@@ -116,17 +181,24 @@ func (fb *Filebeat) loadModulesPipelines(b *beat.Beat) error {
 		return nil
 	}
 
+	overwritePipelines := fb.config.OverwritePipelines
+	if b.InSetupCmd {
+		overwritePipelines = true
+	}
+
 	// register pipeline loading to happen every time a new ES connection is
 	// established
 	callback := func(esClient *elasticsearch.Client) error {
-		return fb.moduleRegistry.LoadPipelines(esClient)
+		return fb.moduleRegistry.LoadPipelines(esClient, overwritePipelines)
 	}
-	elasticsearch.RegisterConnectCallback(callback)
+	_, err := elasticsearch.RegisterConnectCallback(callback)
 
-	return nil
+	return err
 }
 
-func (fb *Filebeat) loadModulesML(b *beat.Beat) error {
+func (fb *Filebeat) loadModulesML(b *beat.Beat, kibanaConfig *common.Config) error {
+	var errs multierror.Errors
+
 	logp.Debug("machine-learning", "Setting up ML jobs for modules")
 
 	if b.Config.Output.Name() != "elasticsearch" {
@@ -141,7 +213,73 @@ func (fb *Filebeat) loadModulesML(b *beat.Beat) error {
 		return errors.Errorf("Error creating Elasticsearch client: %v", err)
 	}
 
-	return fb.moduleRegistry.LoadML(esClient)
+	if kibanaConfig == nil {
+		kibanaConfig = common.NewConfig()
+	}
+
+	if esConfig.Enabled() {
+		username, _ := esConfig.String("username", -1)
+		password, _ := esConfig.String("password", -1)
+
+		if !kibanaConfig.HasField("username") && username != "" {
+			kibanaConfig.SetString("username", -1, username)
+		}
+		if !kibanaConfig.HasField("password") && password != "" {
+			kibanaConfig.SetString("password", -1, password)
+		}
+	}
+
+	kibanaClient, err := kibana.NewKibanaClient(kibanaConfig)
+	if err != nil {
+		return errors.Errorf("Error creating Kibana client: %v", err)
+	}
+
+	if err := setupMLBasedOnVersion(fb.moduleRegistry, esClient, kibanaClient); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Add dynamic modules.d
+	if fb.config.ConfigModules.Enabled() {
+		config := cfgfile.DefaultDynamicConfig
+		fb.config.ConfigModules.Unpack(&config)
+
+		modulesManager, err := cfgfile.NewGlobManager(config.Path, ".yml", ".disabled")
+		if err != nil {
+			return errors.Wrap(err, "initialization error")
+		}
+
+		for _, file := range modulesManager.ListEnabled() {
+			confs, err := cfgfile.LoadList(file.Path)
+			if err != nil {
+				errs = append(errs, errors.Wrap(err, "error loading config file"))
+				continue
+			}
+			set, err := fileset.NewModuleRegistry(confs, "", false)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+
+			if err := setupMLBasedOnVersion(set, esClient, kibanaClient); err != nil {
+				errs = append(errs, err)
+			}
+
+		}
+	}
+
+	return errs.Err()
+}
+
+func setupMLBasedOnVersion(reg *fileset.ModuleRegistry, esClient *elasticsearch.Client, kibanaClient *kibana.Client) error {
+	if isElasticsearchLoads(kibanaClient.GetVersion()) {
+		return reg.LoadML(esClient)
+	}
+	return reg.SetupML(esClient, kibanaClient)
+}
+
+func isElasticsearchLoads(kibanaVersion common.Version) bool {
+	return kibanaVersion.Major < 6 ||
+		(kibanaVersion.Major == 6 && kibanaVersion.Minor < 1)
 }
 
 // Run allows the beater to be run as a beat.
@@ -168,7 +306,7 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 	finishedLogger := newFinishedLogger(wgEvents)
 
 	// Setup registrar to persist state
-	registrar, err := registrar.New(config.RegistryFile, finishedLogger)
+	registrar, err := registrar.New(config.RegistryFile, config.RegistryFilePermissions, config.RegistryFlush, finishedLogger)
 	if err != nil {
 		logp.Err("Could not init registrar: %v", err)
 		return err
@@ -177,8 +315,8 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 	// Make sure all events that were published in
 	registrarChannel := newRegistrarLogger(registrar)
 
-	err = b.Publisher.SetACKHandler(pub.PipelineACKHandler{
-		ACKEvents: newEventACKer(registrarChannel).ackEvents,
+	err = b.Publisher.SetACKHandler(beat.PipelineACKHandler{
+		ACKEvents: newEventACKer(finishedLogger, registrarChannel).ackEvents,
 	})
 	if err != nil {
 		logp.Err("Failed to install the registry with the publisher pipeline: %v", err)
@@ -187,8 +325,8 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 
 	outDone := make(chan struct{}) // outDone closes down all active pipeline connections
 	crawler, err := crawler.New(
-		channel.NewOutletFactory(outDone, b.Publisher, wgEvents).Create,
-		config.Prospectors,
+		channel.NewOutletFactory(outDone, wgEvents).Create,
+		config.Inputs,
 		b.Info.Version,
 		fb.done,
 		*once)
@@ -229,7 +367,11 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 		logp.Warn(pipelinesWarning)
 	}
 
-	err = crawler.Start(registrar, config.ConfigProspector, config.ConfigModules, pipelineLoaderFactory)
+	if config.OverwritePipelines {
+		logp.Debug("modules", "Existing Ingest pipelines will be updated")
+	}
+
+	err = crawler.Start(b.Publisher, registrar, config.ConfigInput, config.ConfigModules, pipelineLoaderFactory, config.OverwritePipelines)
 	if err != nil {
 		crawler.Stop()
 		return err
@@ -245,14 +387,34 @@ func (fb *Filebeat) Run(b *beat.Beat) error {
 		waitFinished.Add(runOnce)
 	}
 
+	// Register reloadable list of inputs and modules
+	inputs := cfgfile.NewRunnerList(management.DebugK, crawler.InputsFactory, b.Publisher)
+	reload.Register.MustRegisterList("filebeat.inputs", inputs)
+
+	modules := cfgfile.NewRunnerList(management.DebugK, crawler.ModulesFactory, b.Publisher)
+	reload.Register.MustRegisterList("filebeat.modules", modules)
+
+	var adiscover *autodiscover.Autodiscover
+	if fb.config.Autodiscover != nil {
+		adapter := fbautodiscover.NewAutodiscoverAdapter(crawler.InputsFactory, crawler.ModulesFactory)
+		adiscover, err = autodiscover.NewAutodiscover("filebeat", b.Publisher, adapter, config.Autodiscover)
+		if err != nil {
+			return err
+		}
+	}
+	adiscover.Start()
+
 	// Add done channel to wait for shutdown signal
 	waitFinished.AddChan(fb.done)
 	waitFinished.Wait()
 
-	// Stop crawler -> stop prospectors -> stop harvesters
+	// Stop reloadable lists, autodiscover -> Stop crawler -> stop inputs -> stop harvesters
 	// Note: waiting for crawlers to stop here in order to install wgEvents.Wait
 	//       after all events have been enqueued for publishing. Otherwise wgEvents.Wait
 	//       or publisher might panic due to concurrent updates.
+	inputs.Stop()
+	modules.Stop()
+	adiscover.Stop()
 	crawler.Stop()
 
 	timeout := fb.config.ShutdownTimeout

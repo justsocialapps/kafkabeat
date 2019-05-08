@@ -1,8 +1,26 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package ucfg
 
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"path"
 	"reflect"
@@ -54,6 +72,8 @@ func TestErrorMessages(t *testing.T) {
 		"arr_missing_w_meta":         raiseMissingArr(context{}, testMeta, 5),
 		"arr_missing_nested_wo_meta": raiseMissingArr(testNestedCtx, nil, 5),
 		"arr_missing_nested_w_meta":  raiseMissingArr(testNestedCtx, testMeta, 5),
+
+		"cyclic_reference": raiseCyclicErr("top.key"),
 
 		"arr_oob_wo_meta":        raiseIndexOutOfBounds(nil, cfgSub{c}, 5),
 		"arr_oob_w_meta":         raiseIndexOutOfBounds(nil, cfgSub{cMeta}, 5),
@@ -118,6 +138,11 @@ func TestErrorMessages(t *testing.T) {
 		"unsupported_input_type_nested_w_meta": raiseUnsupportedInputType(
 			testNestedCtx, testMeta, reflect.ValueOf(1)),
 
+		"no_parse":               raiseNoParse(context{}, testMeta),
+		"no_parse_w_meta":        raiseNoParse(context{}, testMeta),
+		"no_parse_nested":        raiseNoParse(testNestedCtx, nil),
+		"no_parse_nested_w_meta": raiseNoParse(testNestedCtx, testMeta),
+
 		"nil_value_error":  raiseNil(ErrNilValue),
 		"nil_config_error": raiseNil(ErrNilConfig),
 
@@ -173,27 +198,27 @@ func TestErrorMessages(t *testing.T) {
 	}
 
 	for name, result := range tests {
-		t.Logf("Test error message for: %v", name)
+		t.Run(fmt.Sprintf("Test error message for: %v", name), func(t *testing.T) {
+			message := result.Message()
+			goldenFile := path.Join(goldenPath, name+".golden")
 
-		message := result.Message()
-		goldenFile := path.Join(goldenPath, name+".golden")
-
-		if updateFlag != nil && *updateFlag {
-			t.Logf("writing golden file: %v", goldenFile)
-			t.Logf("%v", message)
-			t.Log("")
-			err := ioutil.WriteFile(goldenFile, []byte(message), 0666)
-			if err != nil {
-				t.Fatalf("Failed to write golden file ('%v'): %v", goldenFile, err)
+			if updateFlag != nil && *updateFlag {
+				t.Logf("writing golden file: %v", goldenFile)
+				t.Logf("%v", message)
+				t.Log("")
+				err := ioutil.WriteFile(goldenFile, []byte(message), 0666)
+				if err != nil {
+					t.Fatalf("Failed to write golden file ('%v'): %v", goldenFile, err)
+				}
 			}
-		}
 
-		tmp, err := ioutil.ReadFile(goldenFile)
-		if err != nil {
-			t.Fatalf("Failed to read golden file ('%v'): %v", goldenFile, err)
-		}
+			tmp, err := ioutil.ReadFile(goldenFile)
+			if err != nil {
+				t.Fatalf("Failed to read golden file ('%v'): %v\nExpected contents: '%v'", goldenFile, err, message)
+			}
 
-		golden := string(tmp)
-		assert.Equal(t, golden, message)
+			golden := string(tmp)
+			assert.Equal(t, golden, message)
+		})
 	}
 }

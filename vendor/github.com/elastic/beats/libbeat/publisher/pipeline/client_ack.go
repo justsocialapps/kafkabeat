@@ -1,10 +1,27 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package pipeline
 
 import (
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common/atomic"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 type clientACKer struct {
@@ -13,7 +30,7 @@ type clientACKer struct {
 }
 
 func (p *Pipeline) makeACKer(
-	withProcessors bool,
+	canDrop bool,
 	cfg *beat.ClientConfig,
 	waitClose time.Duration,
 ) acker {
@@ -25,17 +42,17 @@ func (p *Pipeline) makeACKer(
 	sema := p.eventSema
 	switch {
 	case cfg.ACKCount != nil:
-		acker = bld.createCountACKer(withProcessors, sema, cfg.ACKCount)
+		acker = bld.createCountACKer(canDrop, sema, cfg.ACKCount)
 	case cfg.ACKEvents != nil:
-		acker = bld.createEventACKer(withProcessors, sema, cfg.ACKEvents)
+		acker = bld.createEventACKer(canDrop, sema, cfg.ACKEvents)
 	case cfg.ACKLastEvent != nil:
 		cb := lastEventACK(cfg.ACKLastEvent)
-		acker = bld.createEventACKer(withProcessors, sema, cb)
+		acker = bld.createEventACKer(canDrop, sema, cb)
 	default:
 		if waitClose <= 0 {
-			return bld.createPipelineACKer(withProcessors, sema)
+			return bld.createPipelineACKer(canDrop, sema)
 		}
-		acker = bld.createCountACKer(withProcessors, sema, func(_ int) {})
+		acker = bld.createCountACKer(canDrop, sema, func(_ int) {})
 	}
 
 	if waitClose <= 0 {
@@ -44,8 +61,8 @@ func (p *Pipeline) makeACKer(
 	return newWaitACK(acker, waitClose)
 }
 
-func lastEventACK(fn func(beat.Event)) func([]beat.Event) {
-	return func(events []beat.Event) {
+func lastEventACK(fn func(interface{})) func([]interface{}) {
+	return func(events []interface{}) {
 		fn(events[len(events)-1])
 	}
 }
@@ -91,7 +108,7 @@ func buildClientEventACK(
 	pipeline *Pipeline,
 	canDrop bool,
 	sema *sema,
-	mk func(*clientACKer) func([]beat.Event, int),
+	mk func(*clientACKer) func([]interface{}, int),
 ) acker {
 	guard := &clientACKer{}
 	guard.lift(newEventACK(pipeline, canDrop, sema, mk(guard)))

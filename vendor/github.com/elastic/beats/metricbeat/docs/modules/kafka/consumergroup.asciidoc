@@ -3,6 +3,8 @@ This file is generated! See scripts/docs_collector.py
 ////
 
 [[metricbeat-metricset-kafka-consumergroup]]
+=== Kafka consumergroup metricset
+
 include::../../../module/kafka/consumergroup/_meta/docs.asciidoc[]
 
 

@@ -3,6 +3,8 @@ This file is generated! See scripts/docs_collector.py
 ////
 
 [[metricbeat-metricset-system-socket]]
+=== System socket metricset
+
 include::../../../module/system/socket/_meta/docs.asciidoc[]
 
 

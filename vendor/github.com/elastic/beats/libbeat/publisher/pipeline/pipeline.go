@@ -1,4 +1,21 @@
-// Package pipeline combines all publisher functionality (processors, broker,
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Package pipeline combines all publisher functionality (processors, queue,
 // outputs) to create instances of complete publisher pipelines, beats can
 // connect to publish events to.
 package pipeline
@@ -8,34 +25,36 @@ import (
 	"sync"
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/common/atomic"
-	"github.com/elastic/beats/libbeat/monitoring"
-
+	"github.com/elastic/beats/libbeat/common/reload"
 	"github.com/elastic/beats/libbeat/logp"
+	"github.com/elastic/beats/libbeat/monitoring"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/processors"
 	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
-	"github.com/elastic/beats/libbeat/publisher/broker"
+	"github.com/elastic/beats/libbeat/publisher/queue"
 )
 
 // Pipeline implementation providint all beats publisher functionality.
-// The pipeline consists of clients, processors, a central broker, an output
+// The pipeline consists of clients, processors, a central queue, an output
 // controller and the actual outputs.
-// The broker implementing the broker.Broker interface is the most entral entity
+// The queue implementing the queue.Queue interface is the most central entity
 // to the pipeline, providing support for pushung, batching and pulling events.
 // The pipeline adds different ACKing strategies and wait close support on top
-// of the broker. For handling ACKs, the pipeline keeps track of filtered out events,
+// of the queue. For handling ACKs, the pipeline keeps track of filtered out events,
 // to be ACKed to the client in correct order.
 // The output controller configures a (potentially reloadable) set of load
-// balanced output clients. Events will be pulled from the broker and pushed to
+// balanced output clients. Events will be pulled from the queue and pushed to
 // the output clients using a shared work queue for the active outputs.Group.
 // Processors in the pipeline are executed in the clients go-routine, before
-// entering the broker. No filtering/processing will occur on the output side.
+// entering the queue. No filtering/processing will occur on the output side.
 type Pipeline struct {
+	beatInfo beat.Info
+
 	logger *logp.Logger
-	broker broker.Broker
+	queue  queue.Queue
 	output *outputController
 
 	observer observer
@@ -61,10 +80,14 @@ type pipelineProcessors struct {
 	// The pipeline its processor settings for
 	// constructing the clients complete processor
 	// pipeline on connect.
-	beatMetaProcessor  beat.Processor
-	eventMetaProcessor beat.Processor
-	processors         beat.Processor
-	disabled           bool // disabled is set if outputs have been disabled via CLI
+	builtinMeta common.MapStr
+	fields      common.MapStr
+	tags        []string
+
+	processors beat.Processor
+
+	disabled   bool // disabled is set if outputs have been disabled via CLI
+	alwaysCopy bool
 }
 
 // Settings is used to pass additional settings to a newly created pipeline instance.
@@ -86,8 +109,8 @@ type Settings struct {
 // processors, so all processors configured with the pipeline or client will see
 // the same/complete event.
 type Annotations struct {
-	Beat  common.MapStr
-	Event common.EventMetadata
+	Event   common.EventMetadata
+	Builtin common.MapStr
 }
 
 // WaitCloseMode enumerates the possible behaviors of WaitClose in a pipeline.
@@ -112,7 +135,7 @@ type pipelineEventer struct {
 	mutex      sync.Mutex
 	modifyable bool
 
-	observer  *observer
+	observer  queueObserver
 	waitClose *waitCloser
 	cb        *pipelineEventCB
 }
@@ -122,108 +145,67 @@ type waitCloser struct {
 	events sync.WaitGroup
 }
 
-type brokerFactory func(broker.Eventer) (broker.Broker, error)
+type queueFactory func(queue.Eventer) (queue.Queue, error)
 
-// Load uses a Config object to create a new complete Pipeline instance with
-// configured broker and outputs.
-func Load(
-	beatInfo common.BeatInfo,
-	monitoring *monitoring.Registry,
-	config Config,
-) (*Pipeline, error) {
-	if !config.Output.IsSet() {
-		return nil, errors.New("no output configured")
-	}
-
-	brokerFactory := func(e broker.Eventer) (broker.Broker, error) {
-		return broker.Load(e, config.Broker)
-	}
-
-	output, err := outputs.Load(beatInfo, nil, config.Output.Name(), config.Output.Config())
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO: configure pipeline processors
-	pipeline, err := New(monitoring, brokerFactory, output, Settings{
-		WaitClose:     config.WaitShutdown,
-		WaitCloseMode: WaitOnPipelineClose,
-	})
-	if err != nil {
-		for _, c := range output.Clients {
-			c.Close()
-		}
-		return nil, err
-	}
-
-	return pipeline, nil
-}
-
-// New create a new Pipeline instance from a broker instance and a set of outputs.
-// The new pipeline will take ownership of broker and outputs. On Close, the
-// broker and outputs will be closed.
+// New create a new Pipeline instance from a queue instance and a set of outputs.
+// The new pipeline will take ownership of queue and outputs. On Close, the
+// queue and outputs will be closed.
 func New(
+	beat beat.Info,
+	monitors Monitors,
 	metrics *monitoring.Registry,
-	brokerFactory brokerFactory,
+	queueFactory queueFactory,
 	out outputs.Group,
 	settings Settings,
 ) (*Pipeline, error) {
-	annotations := settings.Annotations
 	var err error
 
-	var beatMeta beat.Processor
-	if meta := annotations.Beat; meta != nil {
-		beatMeta = beatAnnotateProcessor(meta)
-	}
-
-	var eventMeta beat.Processor
-	if em := annotations.Event; len(em.Fields) > 0 || len(em.Tags) > 0 {
-		eventMeta = eventAnnotateProcessor(em)
-	}
-
-	var prog beat.Processor
-	if ps := settings.Processors; ps != nil && len(ps.List) > 0 {
-		tmp := &program{title: "global"}
-		for _, p := range ps.List {
-			tmp.add(p)
-		}
-		prog = tmp
-	}
-
-	log := defaultLogger
+	log := logp.NewLogger("publish")
+	annotations := settings.Annotations
+	processors := settings.Processors
+	disabledOutput := settings.Disabled
 	p := &Pipeline{
+		beatInfo:         beat,
 		logger:           log,
+		observer:         nilObserver,
 		waitCloseMode:    settings.WaitCloseMode,
 		waitCloseTimeout: settings.WaitClose,
-		processors: pipelineProcessors{
-			beatMetaProcessor:  beatMeta,
-			eventMetaProcessor: eventMeta,
-			processors:         prog,
-			disabled:           settings.Disabled,
-		},
+		processors:       makePipelineProcessors(annotations, processors, disabledOutput),
 	}
 	p.ackBuilder = &pipelineEmptyACK{p}
 	p.ackActive = atomic.MakeBool(true)
 
-	p.eventer.observer = &p.observer
+	if metrics != nil {
+		p.observer = newMetricsObserver(metrics)
+	}
+	p.eventer.observer = p.observer
 	p.eventer.modifyable = true
 
 	if settings.WaitCloseMode == WaitOnPipelineClose && settings.WaitClose > 0 {
 		p.waitCloser = &waitCloser{}
 
-		// waitCloser decrements counter on broker ACK (not per client)
+		// waitCloser decrements counter on queue ACK (not per client)
 		p.eventer.waitClose = p.waitCloser
 	}
 
-	p.broker, err = brokerFactory(&p.eventer)
+	p.queue, err = queueFactory(&p.eventer)
 	if err != nil {
 		return nil, err
 	}
-	p.eventSema = newSema(p.broker.BufferConfig().Events)
 
-	p.observer.init(metrics)
+	if count := p.queue.BufferConfig().Events; count > 0 {
+		p.eventSema = newSema(count)
+	}
 
-	p.output = newOutputController(log, &p.observer, p.broker)
+	maxEvents := p.queue.BufferConfig().Events
+	if maxEvents <= 0 {
+		// Maximum number of events until acker starts blocking.
+		// Only active if pipeline can drop events.
+		maxEvents = 64000
+	}
+	p.eventSema = newSema(maxEvents)
+
+	p.output = newOutputController(beat, monitors, log, p.observer, p.queue)
 	p.output.Set(out)
 
 	return p, nil
@@ -268,7 +250,7 @@ func (p *Pipeline) SetACKHandler(handler beat.PipelineACKHandler) error {
 	return nil
 }
 
-// Close stops the pipeline, outputs and broker.
+// Close stops the pipeline, outputs and queue.
 // If WaitClose with WaitOnPipelineClose mode is configured, Close will block
 // for a duration of WaitClose, if there are still active events in the pipeline.
 // Note: clients must be closed before calling Close.
@@ -296,13 +278,13 @@ func (p *Pipeline) Close() error {
 
 	// TODO: close/disconnect still active clients
 
-	// close output before shutting down broker
+	// close output before shutting down queue
 	p.output.Close()
 
-	// shutdown broker
-	err := p.broker.Close()
+	// shutdown queue
+	err := p.queue.Close()
 	if err != nil {
-		log.Err("pipeline broker shutdown error: ", err)
+		log.Error("pipeline queue shutdown error: ", err)
 	}
 
 	p.observer.cleanup()
@@ -319,8 +301,9 @@ func (p *Pipeline) Connect() (beat.Client, error) {
 // the appropriate fields in the passed ClientConfig.
 func (p *Pipeline) ConnectWith(cfg beat.ClientConfig) (beat.Client, error) {
 	var (
-		canDrop    bool
-		eventFlags publisher.EventFlags
+		canDrop      bool
+		dropOnCancel bool
+		eventFlags   publisher.EventFlags
 	)
 
 	err := validateClientConfig(&cfg)
@@ -335,6 +318,7 @@ func (p *Pipeline) ConnectWith(cfg beat.ClientConfig) (beat.Client, error) {
 	switch cfg.PublishMode {
 	case beat.GuaranteedSend:
 		eventFlags = publisher.GuaranteedSend
+		dropOnCancel = true
 	case beat.DropIfFull:
 		canDrop = true
 	}
@@ -351,13 +335,12 @@ func (p *Pipeline) ConnectWith(cfg beat.ClientConfig) (beat.Client, error) {
 		}
 	}
 
-	processors := p.newProcessorPipeline(cfg)
-
+	processors := newProcessorPipeline(p.beatInfo, p.processors, cfg)
 	acker := p.makeACKer(processors != nil, &cfg, waitClose)
-	producerCfg := broker.ProducerConfig{
-		// only cancel events from broker if acker is configured
-		// and no pipeline-wide ACK handler is registered
-		DropOnCancel: acker != nil && p.eventer.cb == nil,
+	producerCfg := queue.ProducerConfig{
+		// Cancel events from queue if acker is configured
+		// and no pipeline-wide ACK handler is registered.
+		DropOnCancel: dropOnCancel && acker != nil && p.eventer.cb == nil,
 	}
 
 	if reportEvents || cfg.Events != nil {
@@ -377,7 +360,7 @@ func (p *Pipeline) ConnectWith(cfg beat.ClientConfig) (beat.Client, error) {
 		acker = nilACKer
 	}
 
-	producer := p.broker.Producer(producerCfg)
+	producer := p.queue.Producer(producerCfg)
 	client := &client{
 		pipeline:     p,
 		isOpen:       atomic.MakeBool(true),
@@ -401,7 +384,7 @@ func (e *pipelineEventer) OnACK(n int) {
 		wc.dec(n)
 	}
 	if e.cb != nil {
-		e.cb.reportBrokerACK(n)
+		e.cb.reportQueueACK(n)
 	}
 }
 
@@ -417,4 +400,44 @@ func (e *waitCloser) dec(n int) {
 
 func (e *waitCloser) wait() {
 	e.events.Wait()
+}
+
+func makePipelineProcessors(
+	annotations Annotations,
+	processors *processors.Processors,
+	disabled bool,
+) pipelineProcessors {
+	p := pipelineProcessors{
+		disabled: disabled,
+	}
+
+	hasProcessors := processors != nil && len(processors.List) > 0
+	if hasProcessors {
+		tmp := &program{title: "global"}
+		for _, p := range processors.List {
+			tmp.add(p)
+		}
+		p.processors = tmp
+	}
+
+	if meta := annotations.Builtin; meta != nil {
+		p.builtinMeta = meta
+	}
+
+	if em := annotations.Event; len(em.Fields) > 0 {
+		fields := common.MapStr{}
+		common.MergeFields(fields, em.Fields.Clone(), em.FieldsUnderRoot)
+		p.fields = fields
+	}
+
+	if t := annotations.Event.Tags; len(t) > 0 {
+		p.tags = t
+	}
+
+	return p
+}
+
+// OutputReloader returns a reloadable object for the output section of this pipeline
+func (p *Pipeline) OutputReloader() reload.Reloadable {
+	return p.output
 }

@@ -1,18 +1,34 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package publish
 
 import (
 	"errors"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/processors"
-	"github.com/elastic/beats/libbeat/publisher/bc/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 type TransactionPublisher struct {
 	done      chan struct{}
-	pipeline  publisher.Publisher
+	pipeline  beat.Pipeline
 	canDrop   bool
 	processor transProcessor
 }
@@ -26,7 +42,8 @@ type transProcessor struct {
 var debugf = logp.MakeDebug("publish")
 
 func NewTransactionPublisher(
-	pipeline publisher.Publisher,
+	name string,
+	pipeline beat.Pipeline,
 	ignoreOutgoing bool,
 	canDrop bool,
 ) (*TransactionPublisher, error) {
@@ -35,7 +52,6 @@ func NewTransactionPublisher(
 		return nil, err
 	}
 
-	name := pipeline.(*publisher.BeatPublisher).GetName()
 	p := &TransactionPublisher{
 		done:     make(chan struct{}),
 		pipeline: pipeline,
@@ -79,7 +95,7 @@ func (p *TransactionPublisher) CreateReporter(
 		clientConfig.PublishMode = beat.DropIfFull
 	}
 
-	client, err := p.pipeline.ConnectX(clientConfig)
+	client, err := p.pipeline.ConnectWith(clientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -89,20 +105,24 @@ func (p *TransactionPublisher) CreateReporter(
 	ch := make(chan beat.Event, 3)
 	go p.worker(ch, client)
 	return func(event beat.Event) {
-		ch <- event
+		select {
+		case ch <- event:
+		case <-p.done:
+			ch = nil // stop serving more send requests
+		}
 	}, nil
 }
 
 func (p *TransactionPublisher) worker(ch chan beat.Event, client beat.Client) {
-	go func() {
-		<-p.done
-		close(ch)
-	}()
-
-	for event := range ch {
-		pub, _ := p.processor.Run(&event)
-		if pub != nil {
-			client.Publish(*pub)
+	for {
+		select {
+		case <-p.done:
+			return
+		case event := <-ch:
+			pub, _ := p.processor.Run(&event)
+			if pub != nil {
+				client.Publish(*pub)
+			}
 		}
 	}
 }
@@ -167,22 +187,30 @@ func (p *transProcessor) normalizeTransAddr(event common.MapStr) bool {
 			event["direction"] = "out"
 		}
 
-		srcServer = p.GetServerName(src.IP)
 		event["client_ip"] = src.IP
 		event["client_port"] = src.Port
 		event["client_proc"] = src.Proc
-		event["client_server"] = srcServer
+		if len(src.Cmdline) > 0 {
+			event["client_cmdline"] = src.Cmdline
+		}
+		if _, exists := event["client_server"]; !exists {
+			event["client_server"] = p.GetServerName(src.IP)
+		}
 		delete(event, "src")
 	}
 
 	dst, ok := event["dst"].(*common.Endpoint)
 	debugf("has dst: %v", ok)
 	if ok {
-		dstServer = p.GetServerName(dst.IP)
 		event["ip"] = dst.IP
 		event["port"] = dst.Port
 		event["proc"] = dst.Proc
-		event["server"] = dstServer
+		if len(dst.Cmdline) > 0 {
+			event["cmdline"] = dst.Cmdline
+		}
+		if _, exists := event["server"]; !exists {
+			event["server"] = p.GetServerName(dst.IP)
+		}
 		delete(event, "dst")
 
 		//check if it's incoming transaction (as server)

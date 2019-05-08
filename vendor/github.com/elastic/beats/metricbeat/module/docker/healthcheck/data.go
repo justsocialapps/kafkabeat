@@ -1,9 +1,27 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package healthcheck
 
 import (
+	"context"
 	"strings"
 
-	dc "github.com/fsouza/go-dockerclient"
+	"github.com/docker/docker/api/types"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
@@ -11,7 +29,7 @@ import (
 	"github.com/elastic/beats/metricbeat/module/docker"
 )
 
-func eventsMapping(containers []dc.APIContainers, m *MetricSet) []common.MapStr {
+func eventsMapping(containers []types.Container, m *MetricSet) []common.MapStr {
 	var events []common.MapStr
 	for _, container := range containers {
 		event := eventMapping(&container, m)
@@ -22,16 +40,22 @@ func eventsMapping(containers []dc.APIContainers, m *MetricSet) []common.MapStr 
 	return events
 }
 
-func eventMapping(cont *dc.APIContainers, m *MetricSet) common.MapStr {
+func eventMapping(cont *types.Container, m *MetricSet) common.MapStr {
 	if !hasHealthCheck(cont.Status) {
 		return nil
 	}
 
-	container, err := m.dockerClient.InspectContainer(cont.ID)
+	container, err := m.dockerClient.ContainerInspect(context.TODO(), cont.ID)
 	if err != nil {
-		logp.Err("Error inpsecting container %v: %v", cont.ID, err)
+		logp.Err("Error inspecting container %v: %v", cont.ID, err)
 		return nil
 	}
+
+	// Check if the container has any health check
+	if container.State.Health == nil {
+		return nil
+	}
+
 	lastEvent := len(container.State.Health.Log) - 1
 
 	// Checks if a healthcheck already happened
@@ -41,7 +65,7 @@ func eventMapping(cont *dc.APIContainers, m *MetricSet) common.MapStr {
 
 	return common.MapStr{
 		mb.ModuleDataKey: common.MapStr{
-			"container": docker.NewContainer(cont).ToMapStr(),
+			"container": docker.NewContainer(cont, m.dedot).ToMapStr(),
 		},
 		"status":        container.State.Health.Status,
 		"failingstreak": container.State.Health.FailingStreak,

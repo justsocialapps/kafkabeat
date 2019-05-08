@@ -117,6 +117,7 @@ class TestCommands(metricbeat.BaseTest):
         self.write_system_yml()
 
         exit_code = self.run_beat(
+            logging_args=None,
             extra_args=["test", "modules"])
 
         assert exit_code == 0
@@ -131,10 +132,19 @@ class TestCommands(metricbeat.BaseTest):
         self.write_nginx_yml()
 
         exit_code = self.run_beat(
+            logging_args=None,
             extra_args=["test", "modules"])
 
         assert exit_code == 0
-        assert self.log_contains("ERROR error making http request")
+        try:
+            assert any((
+                self.log_contains("ERROR error making http request"),
+                self.log_contains("ERROR timeout waiting for an event"),
+            ))
+        except:
+            # Print log to help debugging this if error message changes
+            print self.get_log()
+            raise
         assert self.log_contains("cpu...OK")
         assert self.log_contains("memory...OK")
 
@@ -145,6 +155,7 @@ class TestCommands(metricbeat.BaseTest):
         self.write_system_yml()
 
         exit_code = self.run_beat(
+            logging_args=None,
             extra_args=["test", "modules", "apache"])
 
         assert exit_code == 0
@@ -158,6 +169,7 @@ class TestCommands(metricbeat.BaseTest):
         self.write_nginx_yml()
 
         exit_code = self.run_beat(
+            logging_args=None,
             extra_args=["test", "modules", "system", "cpu"])
 
         assert exit_code == 0

@@ -4,11 +4,15 @@
 # keyword to sniff on all connected interfaces.
 packetbeat.interfaces.device: {{ iface_device|default("any") }}
 
+{% if bpf_filter %}
+packetbeat.interfaces.bpf_filter: {{ bpf_filter }}
+{% endif %}
+
 {% if flows %}
 #================================== Flows =====================================
 # Set network flow timeout. Flow is killed if no packet is received before being
 # timed out.
-packetbeat.flows.timeout: 10s
+packetbeat.flows.timeout: 2s
 
 # Configure reporting period. If set to -1, only killed flows will be reported
 packetbeat.flows.period: -1s
@@ -22,6 +26,9 @@ packetbeat.protocols:
   enabled: true
 {% if icmp_send_request %}  send_request: true{%- endif %}
 {% if icmp_send_response %}  send_response: true{%- endif %}
+
+- type: dhcpv4
+  ports: [{{ dhcp_ports|default([67, 68])|join(", ") }}]
 
 - type: dns
   ports: [{{ dns_ports|default([53])|join(", ") }}]
@@ -77,6 +84,7 @@ packetbeat.protocols:
   ]
 {%- endif %}
 {%- if http_max_message_size %}  max_message_size: {{ http_max_message_size }} {%- endif %}
+{%- if http_transaction_timeout %}  transaction_timeout: {{ http_transaction_timeout }} {%- endif %}
 
 - type: memcache
   ports: [{{ memcache_ports|default([11211])|join(", ") }}]
@@ -168,7 +176,7 @@ tags: [
   {%- endif -%}
 ]
 
-packetbeat.shutdown_timeout: {{ shutdown_timeout|default(0) }}
+packetbeat.shutdown_timeout: {{ shutdown_timeout|default('400ms') }}
 
 {%- if processors %}
 
@@ -189,14 +197,27 @@ processors:
 
 {%- endif %}
 
+#================================ Queue =====================================
+
+queue.mem:
+  events: 4096
+  flush.min_events: 8
+  flush.timeout: 0.1s
+
 #================================ Outputs =====================================
 
 # Configure what outputs to use when sending the data collected by the beat.
 # Multiple outputs may be used.
 
+{%- if elasticsearch %}
+#------------------------------- Elasticsearch output ----------------------------
+output.elasticsearch:
+  hosts: ["{{ elasticsearch.host }}"]
+{%- else %}
 #------------------------------- File output ----------------------------------
 output.file:
   path: {{ output_file_path|default(beat.working_dir + "/output") }}
   filename: "{{ output_file_filename|default("packetbeat") }}"
-  rotate_every_kb: 1000
+  rotate_every_kb: {{ rotate_every_kb | default(1000) }}
   #number_of_files: 7
+{%- endif %}

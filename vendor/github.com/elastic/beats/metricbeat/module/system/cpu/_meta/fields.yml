@@ -2,6 +2,7 @@
   type: group
   description: >
     `cpu` contains local CPU stats.
+  release: ga
   fields:
     - name: cores
       type: long
@@ -64,6 +65,12 @@
         was servicing another processor.
         Available only on Unix.
 
+    - name: total.pct
+      type: scaled_float
+      format: percent
+      description: >
+        The percentage of CPU time spent in states other than Idle and IOWait.
+
     # Normalized Percentages
     - name: user.norm.pct
       type: scaled_float
@@ -114,6 +121,13 @@
         The percentage of CPU time spent in involuntary wait by the virtual CPU while the hypervisor
         was servicing another processor.
         Available only on Unix.
+
+    - name: total.norm.pct
+      type: scaled_float
+      format: percent
+      description: >
+        The percentage of CPU time in states other than Idle and IOWait, normalised by the number of cores.
+
 
     # Ticks
     - name: user.ticks

@@ -1,11 +1,28 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package pipeline
 
 import (
 	"sync"
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common/atomic"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 // acker is used to account for published and non-published events to be ACKed
@@ -61,7 +78,7 @@ func (a *countACK) ackEvents(n int) {
 // gapCountACK returns event ACKs to the producer, taking account for dropped events.
 // Events being dropped by processors will always be ACKed with the last batch ACKed
 // by the broker. This way clients waiting for ACKs can expect all processed
-// events being alwyas ACKed.
+// events being always ACKed.
 type gapCountACK struct {
 	pipeline *Pipeline
 
@@ -134,7 +151,7 @@ func (a *gapCountACK) ackLoop() {
 			}
 
 		case <-drop:
-			// TODO: accumulate mulitple drop events + flush count with timer
+			// TODO: accumulate multiple drop events + flush count with timer
 			a.fn(1, 0)
 		}
 	}
@@ -304,27 +321,27 @@ func (a *boundGapCountACK) onACK(total, acked int) {
 	a.fn(total, acked)
 }
 
-// eventACK reports all dropped and ACKed events.
-// An instance of eventACK requires a counting ACKer (boundGapCountACK or countACK),
+// eventDataACK reports all dropped and ACKed events private fields.
+// An instance of eventDataACK requires a counting ACKer (boundGapCountACK or countACK),
 // for accounting for potentially dropped events.
-type eventACK struct {
+type eventDataACK struct {
 	mutex sync.Mutex
 
 	acker    acker
 	pipeline *Pipeline
 
 	// TODO: replace with more efficient dynamic sized ring-buffer?
-	events []beat.Event
-	fn     func(events []beat.Event, acked int)
+	data []interface{}
+	fn   func(data []interface{}, acked int)
 }
 
 func newEventACK(
 	pipeline *Pipeline,
 	canDrop bool,
 	sema *sema,
-	fn func([]beat.Event, int),
-) *eventACK {
-	a := &eventACK{pipeline: pipeline, fn: fn}
+	fn func([]interface{}, int),
+) *eventDataACK {
+	a := &eventDataACK{pipeline: pipeline, fn: fn}
 	a.acker = makeCountACK(pipeline, canDrop, sema, a.onACK)
 
 	return a
@@ -337,15 +354,15 @@ func makeCountACK(pipeline *Pipeline, canDrop bool, sema *sema, fn func(int, int
 	return newCountACK(fn)
 }
 
-func (a *eventACK) close() {
+func (a *eventDataACK) close() {
 	a.acker.close()
 }
 
-func (a *eventACK) addEvent(event beat.Event, published bool) bool {
+func (a *eventDataACK) addEvent(event beat.Event, published bool) bool {
 	a.mutex.Lock()
 	active := a.pipeline.ackActive.Load()
 	if active {
-		a.events = append(a.events, event)
+		a.data = append(a.data, event.Private)
 	}
 	a.mutex.Unlock()
 
@@ -355,17 +372,17 @@ func (a *eventACK) addEvent(event beat.Event, published bool) bool {
 	return false
 }
 
-func (a *eventACK) ackEvents(n int) { a.acker.ackEvents(n) }
-func (a *eventACK) onACK(total, acked int) {
+func (a *eventDataACK) ackEvents(n int) { a.acker.ackEvents(n) }
+func (a *eventDataACK) onACK(total, acked int) {
 	n := total
 
 	a.mutex.Lock()
-	events := a.events[:n]
-	a.events = a.events[n:]
+	data := a.data[:n]
+	a.data = a.data[n:]
 	a.mutex.Unlock()
 
-	if len(events) > 0 && a.pipeline.ackActive.Load() {
-		a.fn(events, acked)
+	if len(data) > 0 && a.pipeline.ackActive.Load() {
+		a.fn(data, acked)
 	}
 }
 

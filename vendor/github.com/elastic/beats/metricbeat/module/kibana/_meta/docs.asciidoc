@@ -1,3 +1,8 @@
-== Kibana module
+The Kibana module only tracks the high-level metrics. To monitor more Kibana metrics, use our {monitoringdoc}/xpack-monitoring.html[monitoring] feature.
 
-The Kibana module only tracks the high-level metrics. To monitor more Kibana metrics, use our {monitoringdoc}/xpack-monitoring.html[X-Pack monitoring] which is available under a free basic license.
+The default metricset is `status`.
+
+[float]
+=== Compatibility
+
+The Kibana module is tested with Kibana 6.3.

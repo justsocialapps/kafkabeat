@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build !integration
 
 package module_test
@@ -11,7 +28,7 @@ import (
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/outputs/codec/json"
-	pub "github.com/elastic/beats/libbeat/publisher/beat"
+
 	"github.com/elastic/beats/metricbeat/mb"
 	"github.com/elastic/beats/metricbeat/mb/module"
 )
@@ -31,7 +48,7 @@ func ExampleWrapper() {
 	}
 
 	// Create a new Wrapper based on the configuration.
-	m, err := module.NewWrapper(0, config, mb.Registry)
+	m, err := module.NewWrapper(config, mb.Registry, module.WithMetricSetInfo())
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -47,8 +64,8 @@ func ExampleWrapper() {
 	go func() {
 		defer wg.Done()
 		for event := range output {
-			// Make rtt a constant so that the output is constant.
-			event.Fields["metricset"].(common.MapStr)["rtt"] = 111
+			event.Fields.Put("metricset.rtt", 111)
+			event.Fields.Put("event.duration", 111000)
 
 			output, err := encodeEvent(event)
 			if err == nil {
@@ -70,9 +87,14 @@ func ExampleWrapper() {
 	// {
 	//   "@metadata": {
 	//     "beat": "noindex",
-	//     "type": "doc"
+	//     "type": "doc",
+	//     "version": "1.2.3"
 	//   },
 	//   "@timestamp": "2016-05-10T23:27:58.485Z",
+	//   "event": {
+	//     "dataset": "fake.eventfetcher",
+	//     "duration": 111000
+	//   },
 	//   "fake": {
 	//     "eventfetcher": {
 	//       "metric": 1
@@ -103,12 +125,12 @@ func ExampleRunner() {
 	}
 
 	// Create a new Wrapper based on the configuration.
-	m, err := module.NewWrapper(0, config, mb.Registry)
+	m, err := module.NewWrapper(config, mb.Registry, module.WithMetricSetInfo())
 	if err != nil {
 		return
 	}
 
-	connector, err := module.NewConnector(b.Publisher, config)
+	connector, err := module.NewConnector(b.Publisher, config, nil)
 	if err != nil {
 		return
 	}
@@ -129,8 +151,8 @@ func ExampleRunner() {
 	runner.Stop()
 }
 
-func encodeEvent(event pub.Event) (string, error) {
-	output, err := json.New(false).Encode("noindex", &event)
+func encodeEvent(event beat.Event) (string, error) {
+	output, err := json.New(false, true, "1.2.3").Encode("noindex", &event)
 	if err != nil {
 		return "", nil
 	}

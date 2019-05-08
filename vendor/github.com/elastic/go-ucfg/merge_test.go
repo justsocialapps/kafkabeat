@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package ucfg
 
 import (
@@ -549,6 +566,7 @@ func TestMergeSpliced(t *testing.T) {
 			"obj":     "{f1: ${one}, f2: ${two}}",
 			"strings": "${l},${s}",
 			"empty":   "",
+			"escaped": "$${escaped}",
 		},
 	}
 
@@ -591,6 +609,9 @@ func TestMergeSpliced(t *testing.T) {
 	e, err := c.String("sub.empty", -1, PathSep("."))
 	assert.NoError(t, err)
 
+	escaped, err := c.String("sub.escaped", -1, PathSep("."))
+	assert.NoError(t, err)
+
 	assert.Equal(t, true, b)
 	assert.Equal(t, 42, int(i))
 	assert.Equal(t, 23, int(u))
@@ -603,6 +624,7 @@ func TestMergeSpliced(t *testing.T) {
 	assert.Equal(t, "lazy", s0)
 	assert.Equal(t, "str", s1)
 	assert.Equal(t, "", e)
+	assert.Equal(t, "${escaped}", escaped)
 }
 
 func TestMergeVarExp(t *testing.T) {
@@ -714,7 +736,7 @@ func TestMergeRegex(t *testing.T) {
 			continue
 		}
 
-		assert.Equal(t, regex, check.Regex)
+		assert.Equal(t, regex.String(), check.Regex.String())
 	}
 }
 
@@ -931,5 +953,123 @@ func TestMergeNil(t *testing.T) {
 		}
 
 		assert.Equal(t, 42, int(i))
+	}
+}
+
+func TestMergeGlobalArrConfig(t *testing.T) {
+	type testCase struct {
+		options  []Option
+		in       []interface{}
+		expected interface{}
+	}
+
+	cases := map[string]testCase{
+		"merge array values": testCase{
+			in: []interface{}{
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"b": 1},
+					},
+				},
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"c": 2},
+						map[string]interface{}{"d": 3},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"a": []interface{}{
+					map[string]interface{}{"b": uint64(1), "c": uint64(2)},
+					map[string]interface{}{"d": uint64(3)},
+				},
+			},
+		},
+
+		"replace array values": testCase{
+			options: []Option{ReplaceValues},
+			in: []interface{}{
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"b": 1},
+					},
+				},
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"c": 2},
+						map[string]interface{}{"d": 3},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"a": []interface{}{
+					map[string]interface{}{"c": uint64(2)},
+					map[string]interface{}{"d": uint64(3)},
+				},
+			},
+		},
+
+		"append array values": testCase{
+			options: []Option{AppendValues},
+			in: []interface{}{
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"b": 1},
+					},
+				},
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"c": 2},
+						map[string]interface{}{"d": 3},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"a": []interface{}{
+					map[string]interface{}{"b": uint64(1)},
+					map[string]interface{}{"c": uint64(2)},
+					map[string]interface{}{"d": uint64(3)},
+				},
+			},
+		},
+
+		"prepend array values": testCase{
+			options: []Option{PrependValues},
+			in: []interface{}{
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"b": 1},
+					},
+				},
+				map[string]interface{}{
+					"a": []interface{}{
+						map[string]interface{}{"c": 2},
+						map[string]interface{}{"d": 3},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"a": []interface{}{
+					map[string]interface{}{"c": uint64(2)},
+					map[string]interface{}{"d": uint64(3)},
+					map[string]interface{}{"b": uint64(1)},
+				},
+			},
+		},
+	}
+
+	for name, test := range cases {
+		test := test
+		t.Run(name, func(t *testing.T) {
+			cfg := New()
+			for _, in := range test.in {
+				err := cfg.Merge(in, test.options...)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			assertConfig(t, cfg, test.expected)
+		})
 	}
 }

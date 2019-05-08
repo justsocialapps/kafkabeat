@@ -1,7 +1,7 @@
 [[constraint]]
   name = "github.com/elastic/beats"
-  branch = "6.0"
+  version = "=6.6.0"
 
 [[constraint]]
   name = "gopkg.in/bsm/sarama-cluster.v2"
-  version = "2.1.8"
+  version = "2.1.15"

@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package redis
 
 import (
@@ -8,6 +25,7 @@ import (
 
 	"github.com/garyburd/redigo/redis"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
@@ -15,7 +33,6 @@ import (
 	"github.com/elastic/beats/libbeat/outputs/outil"
 	"github.com/elastic/beats/libbeat/outputs/transport"
 	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 var (
@@ -29,7 +46,7 @@ type publishFn func(
 
 type client struct {
 	*transport.Client
-	stats    *outputs.Stats
+	observer outputs.Observer
 	index    string
 	dataType redisDataType
 	db       int
@@ -49,7 +66,7 @@ const (
 
 func newClient(
 	tc *transport.Client,
-	stats *outputs.Stats,
+	observer outputs.Observer,
 	timeout time.Duration,
 	pass string,
 	db int, key outil.Selector, dt redisDataType,
@@ -57,7 +74,7 @@ func newClient(
 ) *client {
 	return &client{
 		Client:   tc,
-		stats:    stats,
+		observer: observer,
 		timeout:  timeout,
 		password: pass,
 		index:    index,
@@ -123,13 +140,20 @@ func (c *client) Publish(batch publisher.Batch) error {
 	}
 
 	events := batch.Events()
-	c.stats.NewBatch(len(events))
+	c.observer.NewBatch(len(events))
 	rest, err := c.publish(c.key, events)
 	if rest != nil {
-		c.stats.Failed(len(rest))
+		c.observer.Failed(len(rest))
 		batch.RetryEvents(rest)
+		return err
 	}
+
+	batch.ACK()
 	return err
+}
+
+func (c *client) String() string {
+	return "redis(" + c.Client.String() + ")"
 }
 
 func (c *client) makePublish(
@@ -200,7 +224,7 @@ func (c *client) publishEventsBulk(conn redis.Conn, command string) publishFn {
 		args[0] = dest
 
 		okEvents, args := serializeEvents(args, 1, data, c.index, c.codec)
-		c.stats.Dropped(len(data) - len(okEvents))
+		c.observer.Dropped(len(data) - len(okEvents))
 		if (len(args) - 1) == 0 {
 			return nil, nil
 		}
@@ -208,12 +232,12 @@ func (c *client) publishEventsBulk(conn redis.Conn, command string) publishFn {
 		// RPUSH returns total length of list -> fail and retry all on error
 		_, err := conn.Do(command, args...)
 		if err != nil {
-			logp.Err("Failed to %v to redis list with %v", command, err)
+			logp.Err("Failed to %v to redis list with: %v", command, err)
 			return okEvents, err
 
 		}
 
-		c.stats.Acked(len(okEvents))
+		c.observer.Acked(len(okEvents))
 		return nil, nil
 	}
 }
@@ -223,7 +247,7 @@ func (c *client) publishEventsPipeline(conn redis.Conn, command string) publishF
 		var okEvents []publisher.Event
 		serialized := make([]interface{}, 0, len(data))
 		okEvents, serialized = serializeEvents(serialized, 0, data, c.index, c.codec)
-		c.stats.Dropped(len(data) - len(okEvents))
+		c.observer.Dropped(len(data) - len(okEvents))
 		if len(serialized) == 0 {
 			return nil, nil
 		}
@@ -244,7 +268,7 @@ func (c *client) publishEventsPipeline(conn redis.Conn, command string) publishF
 				return okEvents, err
 			}
 		}
-		c.stats.Dropped(dropped)
+		c.observer.Dropped(dropped)
 
 		if err := conn.Flush(); err != nil {
 			return data, err
@@ -270,7 +294,7 @@ func (c *client) publishEventsPipeline(conn redis.Conn, command string) publishF
 			}
 		}
 
-		c.stats.Acked(len(okEvents) - len(failed))
+		c.observer.Acked(len(okEvents) - len(failed))
 		return failed, lastErr
 	}
 }
@@ -287,6 +311,8 @@ func serializeEvents(
 	for _, d := range data {
 		serializedEvent, err := codec.Encode(index, &d.Content)
 		if err != nil {
+			logp.Err("Encoding event failed with error: %v", err)
+			logp.Debug("redis", "Failed event: %v", d.Content)
 			goto failLoop
 		}
 
@@ -303,6 +329,8 @@ failLoop:
 	for _, d := range rest {
 		serializedEvent, err := codec.Encode(index, &d.Content)
 		if err != nil {
+			logp.Err("Encoding event failed with error: %v", err)
+			logp.Debug("redis", "Failed event: %v", d.Content)
 			i++
 			continue
 		}

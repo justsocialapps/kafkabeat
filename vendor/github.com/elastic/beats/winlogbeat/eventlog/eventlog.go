@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package eventlog
 
 import (
@@ -7,9 +24,10 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/publisher/beat"
+
 	"github.com/elastic/beats/winlogbeat/checkpoint"
 	"github.com/elastic/beats/winlogbeat/sys"
 )
@@ -37,10 +55,10 @@ var (
 
 // EventLog is an interface to a Windows Event Log.
 type EventLog interface {
-	// Open the event log. recordNumber is the last successfully read event log
-	// record number. Read will resume from recordNumber + 1. To start reading
-	// from the first event specify a recordNumber of 0.
-	Open(recordNumber uint64) error
+	// Open the event log. state points to the last successfully read event
+	// in this event log. Read will resume from the next record. To start reading
+	// from the first event specify a zero-valued EventLogState.
+	Open(state checkpoint.EventLogState) error
 
 	// Read records from the event log.
 	Read() ([]Record, error)
@@ -55,8 +73,9 @@ type EventLog interface {
 // Record represents a single event from the log.
 type Record struct {
 	sys.Event
-	API string // The event log API type used to read the record.
-	XML string // XML representation of the event.
+	API    string                   // The event log API type used to read the record.
+	XML    string                   // XML representation of the event.
+	Offset checkpoint.EventLogState // Position of the record within its source stream.
 }
 
 // ToMapStr returns a new MapStr containing the data from this Record.
@@ -111,11 +130,7 @@ func (e Record) ToEvent() beat.Event {
 	return beat.Event{
 		Timestamp: e.TimeCreated.SystemTime,
 		Fields:    m,
-		Private: checkpoint.EventLogState{
-			Name:         e.API,
-			RecordNumber: e.RecordID,
-			Timestamp:    e.TimeCreated.SystemTime,
-		},
+		Private:   e.Offset,
 	}
 }
 
@@ -158,7 +173,7 @@ func addPairs(m common.MapStr, key string, pairs []sys.KeyValue) common.MapStr {
 		if !exists {
 			h[k] = sys.RemoveWindowsLineEndings(kv.Value)
 		} else {
-			debugf("Droping key/value (k=%s, v=%s) pair because key already "+
+			debugf("Dropping key/value (k=%s, v=%s) pair because key already "+
 				"exists. event=%+v", k, kv.Value, m)
 		}
 	}

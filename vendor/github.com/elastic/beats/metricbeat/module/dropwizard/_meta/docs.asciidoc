@@ -1,4 +1,6 @@
-== Dropwizard module
+This is the http://dropwizard.io[Dropwizard] module. The default metricset is `collector`.
 
-This is the http://dropwizard.io[Dropwizard] module.
+[float]
+=== Compability
 
+The Dropwizard module is tested with dropwizard metrics 3.1.0.

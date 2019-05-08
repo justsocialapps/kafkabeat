@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build !integration
 
 package elasticsearch
@@ -12,13 +29,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/common/fmtstr"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs/outest"
 	"github.com/elastic/beats/libbeat/outputs/outil"
 	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 func readStatusItem(in []byte) (int, string, error) {
@@ -84,7 +101,7 @@ func TestCollectPublishFailsNone(t *testing.T) {
 	}
 
 	reader := newJSONReader(response)
-	res := bulkCollectPublishFails(reader, events)
+	res, _ := bulkCollectPublishFails(reader, events)
 	assert.Equal(t, 0, len(res))
 }
 
@@ -102,7 +119,7 @@ func TestCollectPublishFailMiddle(t *testing.T) {
 	events := []publisher.Event{event, eventFail, event}
 
 	reader := newJSONReader(response)
-	res := bulkCollectPublishFails(reader, events)
+	res, _ := bulkCollectPublishFails(reader, events)
 	assert.Equal(t, 1, len(res))
 	if len(res) == 1 {
 		assert.Equal(t, eventFail, res[0])
@@ -122,15 +139,13 @@ func TestCollectPublishFailAll(t *testing.T) {
 	events := []publisher.Event{event, event, event}
 
 	reader := newJSONReader(response)
-	res := bulkCollectPublishFails(reader, events)
+	res, _ := bulkCollectPublishFails(reader, events)
 	assert.Equal(t, 3, len(res))
 	assert.Equal(t, events, res)
 }
 
 func TestCollectPipelinePublishFail(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"elasticsearch"})
-	}
+	logp.TestingSetup(logp.WithSelectors("elasticsearch"))
 
 	response := []byte(`{
       "took": 0, "ingest_took": 0, "errors": true,
@@ -165,7 +180,7 @@ func TestCollectPipelinePublishFail(t *testing.T) {
 	events := []publisher.Event{event}
 
 	reader := newJSONReader(response)
-	res := bulkCollectPublishFails(reader, events)
+	res, _ := bulkCollectPublishFails(reader, events)
 	assert.Equal(t, 1, len(res))
 	assert.Equal(t, events, res)
 }
@@ -180,7 +195,7 @@ func TestGetIndexStandard(t *testing.T) {
 	indexSel := outil.MakeSelector(outil.FmtSelectorExpr(fmtstr, ""))
 
 	event := &beat.Event{Timestamp: ts, Fields: fields}
-	index := getIndex(event, indexSel)
+	index, _ := getIndex(event, indexSel)
 	assert.Equal(t, index, "beatname-"+extension)
 }
 
@@ -206,7 +221,7 @@ func TestGetIndexOverwrite(t *testing.T) {
 			"index": "dynamicindex",
 		},
 		Fields: fields}
-	index := getIndex(event, indexSel)
+	index, _ := getIndex(event, indexSel)
 	expected := "dynamicindex-" + extension
 	assert.Equal(t, expected, index)
 }
@@ -226,7 +241,7 @@ func BenchmarkCollectPublishFailsNone(b *testing.B) {
 	reader := newJSONReader(nil)
 	for i := 0; i < b.N; i++ {
 		reader.init(response)
-		res := bulkCollectPublishFails(reader, events)
+		res, _ := bulkCollectPublishFails(reader, events)
 		if len(res) != 0 {
 			b.Fail()
 		}
@@ -249,7 +264,7 @@ func BenchmarkCollectPublishFailMiddle(b *testing.B) {
 	reader := newJSONReader(nil)
 	for i := 0; i < b.N; i++ {
 		reader.init(response)
-		res := bulkCollectPublishFails(reader, events)
+		res, _ := bulkCollectPublishFails(reader, events)
 		if len(res) != 1 {
 			b.Fail()
 		}
@@ -271,7 +286,7 @@ func BenchmarkCollectPublishFailAll(b *testing.B) {
 	reader := newJSONReader(nil)
 	for i := 0; i < b.N; i++ {
 		reader.init(response)
-		res := bulkCollectPublishFails(reader, events)
+		res, _ := bulkCollectPublishFails(reader, events)
 		if len(res) != 3 {
 			b.Fail()
 		}
@@ -283,8 +298,12 @@ func TestClientWithHeaders(t *testing.T) {
 	// start a mock HTTP server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "testing value", r.Header.Get("X-Test"))
-		requestCount++
+		// from the documentation: https://golang.org/pkg/net/http/
+		// For incoming requests, the Host header is promoted to the
+		// Request.Host field and removed from the Header map.
+		assert.Equal(t, "myhost.local", r.Host)
 		fmt.Fprintln(w, "Hello, client")
+		requestCount++
 	}))
 	defer ts.Close()
 
@@ -292,6 +311,7 @@ func TestClientWithHeaders(t *testing.T) {
 		URL:   ts.URL,
 		Index: outil.MakeSelector(outil.ConstSelectorExpr("test")),
 		Headers: map[string]string{
+			"host":   "myhost.local",
 			"X-Test": "testing value",
 		},
 	}, nil)
@@ -312,4 +332,50 @@ func TestClientWithHeaders(t *testing.T) {
 	err = client.Publish(batch)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, requestCount)
+}
+
+func TestAddToURL(t *testing.T) {
+	type Test struct {
+		url      string
+		path     string
+		pipeline string
+		params   map[string]string
+		expected string
+	}
+	tests := []Test{
+		{
+			url:      "localhost:9200",
+			path:     "/path",
+			pipeline: "",
+			params:   make(map[string]string),
+			expected: "localhost:9200/path",
+		},
+		{
+			url:      "localhost:9200/",
+			path:     "/path",
+			pipeline: "",
+			params:   make(map[string]string),
+			expected: "localhost:9200/path",
+		},
+		{
+			url:      "localhost:9200",
+			path:     "/path",
+			pipeline: "pipeline_1",
+			params:   make(map[string]string),
+			expected: "localhost:9200/path?pipeline=pipeline_1",
+		},
+		{
+			url:      "localhost:9200/",
+			path:     "/path",
+			pipeline: "",
+			params: map[string]string{
+				"param": "value",
+			},
+			expected: "localhost:9200/path?param=value",
+		},
+	}
+	for _, test := range tests {
+		url := addToURL(test.url, test.path, test.pipeline, test.params)
+		assert.Equal(t, url, test.expected)
+	}
 }

@@ -1,9 +1,7 @@
-== PHP-FPM module
-
-beta[]
-
 This module periodically fetches metrics from https://php-fpm.org[PHP-FPM]
 servers.
+
+The default metricset is `pool`.
 
 [float]
 === Module-specific configuration notes
@@ -29,5 +27,5 @@ location ~ /status {
 [float]
 === Compatibility
 
-The PHP-FPM metricsets were tested with PHP 7.1.1 and are expected to
+The PHP_FPM metricsets were tested with PHP 7.1.1 and are expected to
 work with all versions >= 5.

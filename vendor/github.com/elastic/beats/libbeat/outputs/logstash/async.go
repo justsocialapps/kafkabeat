@@ -1,9 +1,27 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package logstash
 
 import (
 	"net"
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common/atomic"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
@@ -14,9 +32,9 @@ import (
 
 type asyncClient struct {
 	*transport.Client
-	stats  *outputs.Stats
-	client *v2.AsyncClient
-	win    window
+	observer outputs.Observer
+	client   *v2.AsyncClient
+	win      *window
 
 	connect func() error
 }
@@ -32,20 +50,25 @@ type msgRef struct {
 }
 
 func newAsyncClient(
+	beat beat.Info,
 	conn *transport.Client,
-	stats *outputs.Stats,
+	observer outputs.Observer,
 	config *Config,
 ) (*asyncClient, error) {
-	c := &asyncClient{}
-	c.Client = conn
-	c.stats = stats
-	c.win.init(defaultStartMaxWindowSize, config.BulkMaxSize)
+	c := &asyncClient{
+		Client:   conn,
+		observer: observer,
+	}
+
+	if config.SlowStart {
+		c.win = newWindower(defaultStartMaxWindowSize, config.BulkMaxSize)
+	}
 
 	if config.TTL != 0 {
 		logp.Warn(`The async Logstash client does not support the "ttl" option`)
 	}
 
-	enc := makeLogstashEventEncoder(config.Index)
+	enc := makeLogstashEventEncoder(beat, config.EscapeHTML, config.Index)
 
 	queueSize := config.Pipelining - 1
 	timeout := config.Timeout
@@ -99,12 +122,8 @@ func (c *asyncClient) Close() error {
 	return c.Client.Close()
 }
 
-func (c *asyncClient) BatchSize() int {
-	return c.win.get()
-}
-
 func (c *asyncClient) Publish(batch publisher.Batch) error {
-	st := c.stats
+	st := c.observer
 	events := batch.Events()
 	st.NewBatch(len(events))
 
@@ -113,27 +132,32 @@ func (c *asyncClient) Publish(batch publisher.Batch) error {
 		return nil
 	}
 
-	window := make([]interface{}, len(events))
-	for i := range events {
-		window[i] = &events[i]
-	}
-
 	ref := &msgRef{
 		client:    c,
 		count:     atomic.MakeUint32(1),
 		batch:     batch,
 		slice:     events,
 		batchSize: len(events),
-		win:       &c.win,
+		win:       c.win,
 		err:       nil,
 	}
 	defer ref.dec()
 
 	for len(events) > 0 {
-		n, err := c.publishWindowed(ref, events)
+		var (
+			n   int
+			err error
+		)
 
-		debugf("%v events out of %v events sent to logstash. Continue sending",
-			n, len(events))
+		if c.win == nil {
+			n = len(events)
+			err = c.sendEvents(ref, events)
+		} else {
+			n, err = c.publishWindowed(ref, events)
+		}
+
+		debugf("%v events out of %v events sent to logstash host %s. Continue sending",
+			n, len(events), c.Host())
 
 		events = events[n:]
 		if err != nil {
@@ -145,6 +169,10 @@ func (c *asyncClient) Publish(batch publisher.Batch) error {
 	return nil
 }
 
+func (c *asyncClient) String() string {
+	return "async(" + c.Client.String() + ")"
+}
+
 func (c *asyncClient) publishWindowed(
 	ref *msgRef,
 	events []publisher.Event,
@@ -152,8 +180,8 @@ func (c *asyncClient) publishWindowed(
 	batchSize := len(events)
 	windowSize := c.win.get()
 
-	debugf("Try to publish %v events to logstash with window size %v",
-		batchSize, windowSize)
+	debugf("Try to publish %v events to logstash host %s with window size %v",
+		batchSize, c.Host(), windowSize)
 
 	// prepare message payload
 	if batchSize > windowSize {
@@ -186,9 +214,11 @@ func (r *msgRef) callback(seq uint32, err error) {
 }
 
 func (r *msgRef) done(n uint32) {
-	r.client.stats.Acked(int(n))
+	r.client.observer.Acked(int(n))
 	r.slice = r.slice[n:]
-	r.win.tryGrowWindow(r.batchSize)
+	if r.win != nil {
+		r.win.tryGrowWindow(r.batchSize)
+	}
 	r.dec()
 }
 
@@ -197,9 +227,11 @@ func (r *msgRef) fail(n uint32, err error) {
 		r.err = err
 	}
 	r.slice = r.slice[n:]
-	r.win.shrinkWindow()
+	if r.win != nil {
+		r.win.shrinkWindow()
+	}
 
-	r.client.stats.Acked(int(n))
+	r.client.observer.Acked(int(n))
 
 	r.dec()
 }
@@ -211,7 +243,7 @@ func (r *msgRef) dec() {
 	}
 
 	if L := len(r.slice); L > 0 {
-		r.client.stats.Failed(L)
+		r.client.observer.Failed(L)
 	}
 
 	err := r.err

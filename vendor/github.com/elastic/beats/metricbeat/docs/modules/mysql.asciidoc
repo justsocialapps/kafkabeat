@@ -8,6 +8,8 @@ This file is generated! See scripts/docs_collector.py
 This module periodically fetches metrics from https://www.mysql.com/[MySQL]
 servers.
 
+The default metricset is `status`.
+
 [float]
 === Module-specific configuration notes
 
@@ -36,6 +38,13 @@ precedence over those specified in the `username` and `password` config options.
 The mysql MetricSets were tested with mysql 5.7.12 and are expected to work with
 all versions >= 5.7.0.
 
+[float]
+=== Dashboard
+
+The mysql module comes with a predefined dashboard. For example:
+
+image::./images/metricbeat-mysql.png[]
+
 
 [float]
 === Example configuration
@@ -47,7 +56,9 @@ in <<configuration-metricbeat>>. Here is an example configuration:
 ----
 metricbeat.modules:
 - module: mysql
-  metricsets: ["status"]
+  metricsets:
+    - "status"
+  #  - "galera_status"
   period: 10s
 
   # Host DSN should be defined as "user:pass@tcp(127.0.0.1:3306)/"
@@ -70,7 +81,11 @@ metricbeat.modules:
 
 The following metricsets are available:
 
+* <<metricbeat-metricset-mysql-galera_status,galera_status>>
+
 * <<metricbeat-metricset-mysql-status,status>>
+
+include::mysql/galera_status.asciidoc[]
 
 include::mysql/status.asciidoc[]
 

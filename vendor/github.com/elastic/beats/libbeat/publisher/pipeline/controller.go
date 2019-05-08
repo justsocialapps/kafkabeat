@@ -1,20 +1,43 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package pipeline
 
 import (
+	"github.com/elastic/beats/libbeat/beat"
+	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/libbeat/common/reload"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
-	"github.com/elastic/beats/libbeat/publisher/broker"
+	"github.com/elastic/beats/libbeat/publisher/queue"
 )
 
-// outputController manages the pipelines output capabilites, like:
+// outputController manages the pipelines output capabilities, like:
 // - start
 // - stop
 // - reload
 type outputController struct {
-	logger   *logp.Logger
-	observer *observer
+	beat     beat.Info
+	monitors Monitors
 
-	broker broker.Broker
+	logger   *logp.Logger
+	observer outputObserver
+
+	queue queue.Queue
 
 	retryer  *retryer
 	consumer *eventConsumer
@@ -39,20 +62,24 @@ type outputWorker interface {
 }
 
 func newOutputController(
+	beat beat.Info,
+	monitors Monitors,
 	log *logp.Logger,
-	observer *observer,
-	b broker.Broker,
+	observer outputObserver,
+	b queue.Queue,
 ) *outputController {
 	c := &outputController{
+		beat:     beat,
+		monitors: monitors,
 		logger:   log,
 		observer: observer,
-		broker:   b,
+		queue:    b,
 	}
 
 	ctx := &batchContext{}
 	c.consumer = newEventConsumer(log, b, ctx)
 	c.retryer = newRetryer(log, observer, nil, c.consumer)
-	ctx.observer = c.observer
+	ctx.observer = observer
 	ctx.retryer = c.retryer
 
 	c.consumer.sigContinue()
@@ -111,6 +138,8 @@ func (c *outputController) Set(outGrp outputs.Group) {
 		}
 	}
 
+	c.out = grp
+
 	// restart consumer (potentially blocked by retryer)
 	c.consumer.sigContinue()
 
@@ -119,4 +148,24 @@ func (c *outputController) Set(outGrp outputs.Group) {
 
 func makeWorkQueue() workQueue {
 	return workQueue(make(chan *Batch, 0))
+}
+
+// Reload the output
+func (c *outputController) Reload(cfg *reload.ConfigWithMeta) error {
+	outputCfg := common.ConfigNamespace{}
+
+	if cfg != nil {
+		if err := cfg.Config.Unpack(&outputCfg); err != nil {
+			return err
+		}
+	}
+
+	output, err := loadOutput(c.beat, c.monitors, outputCfg)
+	if err != nil {
+		return err
+	}
+
+	c.Set(output)
+
+	return nil
 }

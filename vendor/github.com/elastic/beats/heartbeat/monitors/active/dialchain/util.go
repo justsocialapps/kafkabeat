@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package dialchain
 
 import (
@@ -32,14 +49,14 @@ func ConstAddrLayer(address string) Layer {
 }
 
 // MakeConstAddrLayer always passes the same address to the original Layer.
-// This is usefull if a lookup did return multiple IPs for the same hostname,
+// This is useful if a lookup did return multiple IPs for the same hostname,
 // but the IP use to connect shall be fixed.
 func MakeConstAddrLayer(addr string, origLayer Layer) Layer {
 	return withLayerDialer(origLayer, constAddr(addr))
 }
 
 // MakeConstAddrDialer always passes the same address to the original NetDialer.
-// This is usefull if a lookup did return multiple IPs for the same hostname,
+// This is useful if a lookup did return multiple IPs for the same hostname,
 // but the IP use to connect shall be fixed.
 func MakeConstAddrDialer(addr string, origNet NetDialer) NetDialer {
 	return withNetDialer(origNet, constAddr(addr))

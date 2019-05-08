@@ -115,9 +115,12 @@ class Test(BaseTest):
                      "-systemTest",
                      "-v",
                      "-d", "*",
-                     "-test.coverprofile",
-                     os.path.join(self.working_dir, "coverage.cov")
                      ])
+        if os.getenv("TEST_COVERAGE") == "true":
+            args.extend([
+                "-test.coverprofile",
+                os.path.join(self.working_dir, "coverage.cov"),
+            ])
 
         assert self.log_contains("error loading config file") is False
 
@@ -154,7 +157,6 @@ class Test(BaseTest):
             console={
                 "pretty": "false",
                 "bulk_max_size": 1,
-                "flush_interval": "1h"
             }
         )
 
@@ -169,11 +171,11 @@ class Test(BaseTest):
         )
         proc = self.start_beat(logging_args=["-e"])
         self.wait_until(
-            lambda: self.log_contains("Non-zero metrics in the last 100ms:"),
+            lambda: self.log_contains("Non-zero metrics in the last 100ms"),
             max_timeout=2)
         proc.check_kill_and_wait()
         self.wait_until(
-            lambda: self.log_contains("Total non-zero values:"),
+            lambda: self.log_contains("Total non-zero metrics"),
             max_timeout=2)
 
     def test_persistent_uuid(self):

@@ -2,6 +2,7 @@
   type: group
   description: >
     `process` contains process metadata, CPU metrics, and memory metrics.
+  release: ga
   fields:
     - name: name
       type: keyword
@@ -28,6 +29,7 @@
       description: >
         The full command-line used to start the process, including the
         arguments separated by space.
+      ignore_above: 2048
     - name: username
       type: keyword
       description: >
@@ -51,10 +53,14 @@
       prefix: "[float]"
       description: CPU-specific statistics per process.
       fields:
-        - name: user
+        - name: user.ticks
           type: long
           description: >
             The amount of CPU time the process spent in user space.
+        - name: total.value
+          type: long
+          description: >
+            The value of CPU usage since starting the process.
         - name: total.pct
           type: scaled_float
           format: percent
@@ -68,7 +74,7 @@
             The percentage of CPU time spent by the process since the last event.
             This value is normalized by the number of CPU cores and it ranges
             from 0 to 100%.
-        - name: system
+        - name: system.ticks
           type: long
           description: >
             The amount of CPU time the process spent in kernel space.

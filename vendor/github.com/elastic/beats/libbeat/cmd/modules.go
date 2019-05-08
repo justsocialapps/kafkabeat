@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package cmd
 
 import (
@@ -8,6 +25,7 @@ import (
 
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/cfgfile"
+	"github.com/elastic/beats/libbeat/cmd/instance"
 )
 
 // ModulesManager interface provides all actions needed to implement modules command
@@ -21,12 +39,12 @@ type ModulesManager interface {
 	Disable(name string) error
 }
 
-// ModulesManagerFactory builds and return a ModulesManager for the given Beat
-type ModulesManagerFactory func(beat *beat.Beat) (ModulesManager, error)
+// modulesManagerFactory builds and return a ModulesManager for the given Beat
+type modulesManagerFactory func(beat *beat.Beat) (ModulesManager, error)
 
 // GenModulesCmd initializes a command to manage a modules.d folder, it offers
 // list, enable and siable actions
-func GenModulesCmd(name, version string, modulesFactory ModulesManagerFactory) *cobra.Command {
+func GenModulesCmd(name, version string, modulesFactory modulesManagerFactory) *cobra.Command {
 	modulesCmd := cobra.Command{
 		Use:   "modules",
 		Short: "Manage configured modules",
@@ -40,8 +58,8 @@ func GenModulesCmd(name, version string, modulesFactory ModulesManagerFactory) *
 }
 
 // Instantiate a modules manager or die trying
-func getModules(name, version string, modulesFactory ModulesManagerFactory) ModulesManager {
-	b, err := beat.New(name, version)
+func getModules(name, version string, modulesFactory modulesManagerFactory) ModulesManager {
+	b, err := instance.NewBeat(name, "", version)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing beat: %s\n", err)
 		os.Exit(1)
@@ -52,7 +70,7 @@ func getModules(name, version string, modulesFactory ModulesManagerFactory) Modu
 		os.Exit(1)
 	}
 
-	manager, err := modulesFactory(b)
+	manager, err := modulesFactory(&b.Beat)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error in modules manager: %s\n", err)
 		os.Exit(1)
@@ -61,7 +79,7 @@ func getModules(name, version string, modulesFactory ModulesManagerFactory) Modu
 	return manager
 }
 
-func genListModulesCmd(name, version string, modulesFactory ModulesManagerFactory) *cobra.Command {
+func genListModulesCmd(name, version string, modulesFactory modulesManagerFactory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List modules",
@@ -81,7 +99,7 @@ func genListModulesCmd(name, version string, modulesFactory ModulesManagerFactor
 	}
 }
 
-func genEnableModulesCmd(name, version string, modulesFactory ModulesManagerFactory) *cobra.Command {
+func genEnableModulesCmd(name, version string, modulesFactory modulesManagerFactory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "enable MODULE...",
 		Short: "Enable one or more given modules",
@@ -90,7 +108,7 @@ func genEnableModulesCmd(name, version string, modulesFactory ModulesManagerFact
 
 			for _, module := range args {
 				if !modules.Exists(module) {
-					fmt.Printf("Module %s doesn't exists!\n", module)
+					fmt.Printf("Module %s doesn't exist!\n", module)
 					os.Exit(1)
 				}
 
@@ -110,7 +128,7 @@ func genEnableModulesCmd(name, version string, modulesFactory ModulesManagerFact
 	}
 }
 
-func genDisableModulesCmd(name, version string, modulesFactory ModulesManagerFactory) *cobra.Command {
+func genDisableModulesCmd(name, version string, modulesFactory modulesManagerFactory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "disable MODULE...",
 		Short: "Disable one or more given modules",
@@ -119,7 +137,7 @@ func genDisableModulesCmd(name, version string, modulesFactory ModulesManagerFac
 
 			for _, module := range args {
 				if !modules.Exists(module) {
-					fmt.Fprintf(os.Stderr, "Module %s doesn't exists!\n", module)
+					fmt.Fprintf(os.Stderr, "Module %s doesn't exist!\n", module)
 					os.Exit(1)
 				}
 

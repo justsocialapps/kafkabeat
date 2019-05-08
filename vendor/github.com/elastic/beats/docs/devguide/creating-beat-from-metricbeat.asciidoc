@@ -7,7 +7,7 @@ own metricsets.
 [float]
 ==== Requirements
 
-To create your own Beat, you must have Golang {go-version} or later installed, and the `$GOPATH`
+To create your own Beat, you must have Go {go-version} or later installed, and the `$GOPATH`
 must be set up correctly. In addition, the following tools are required:
 
 * https://www.python.org/downloads/[python]
@@ -66,7 +66,7 @@ make setup
 This will do the initial setup for your Beat and also run `make create-metricset`, which will ask you for the
 module name and metricset name of your Beat.
 
-For more details about creating a metricset, see the docs about https://www.elastic.co/guide/en/beats/metricbeat/current/creating-metricsets.html[creating a metricset].
+For more details about creating a metricset, see the docs <<creating-metricsets>>.
 
 
 [float]
@@ -86,14 +86,14 @@ This will run the beat with debug output enabled to the console to directly see 
 [float]
 ==== Step 5 - Package
 
-To create packages and binaries for different plaforms, https://www.docker.com/[docker] is required.
+To create packages and binaries for different platforms, https://www.docker.com/[docker] is required.
 The first step is to get the most recent packaging tools into your beat:
 
 [source,bash]
 ----
-make package
+make release
 ----
 
 This will fetch the most recent packaging tools and start the packaging of your beat. This can take a little bit longer.
 
-For more details about creating a metricset, see the docs about https://www.elastic.co/guide/en/beats/metricbeat/current/creating-metricsets.html[creating a metricset].
+For more details about creating a metricset, see the docs about <<creating-metricsets>>.

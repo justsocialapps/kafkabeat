@@ -1,13 +1,30 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package beater
 
 import (
 	"time"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/processors"
-	"github.com/elastic/beats/libbeat/publisher/bc/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
+
 	"github.com/elastic/beats/winlogbeat/checkpoint"
 	"github.com/elastic/beats/winlogbeat/eventlog"
 )
@@ -44,9 +61,9 @@ func newEventLogger(
 	}, nil
 }
 
-func (e *eventLogger) connect(pipeline publisher.Publisher) (beat.Client, error) {
+func (e *eventLogger) connect(pipeline beat.Pipeline) (beat.Client, error) {
 	api := e.source.Name()
-	return pipeline.ConnectX(beat.ClientConfig{
+	return pipeline.ConnectWith(beat.ClientConfig{
 		PublishMode:   beat.GuaranteedSend,
 		EventMetadata: e.eventMeta,
 		Meta:          nil, // TODO: configure modules/ES ingest pipeline?
@@ -60,7 +77,7 @@ func (e *eventLogger) connect(pipeline publisher.Publisher) (beat.Client, error)
 
 func (e *eventLogger) run(
 	done <-chan struct{},
-	pipeline publisher.Publisher,
+	pipeline beat.Pipeline,
 	state checkpoint.EventLogState,
 ) {
 	api := e.source
@@ -82,7 +99,7 @@ func (e *eventLogger) run(
 		client.Close()
 	}()
 
-	err = api.Open(state.RecordNumber)
+	err = api.Open(state)
 	if err != nil {
 		logp.Warn("EventLog[%s] Open() error. No events will be read from "+
 			"this source. %v", api.Name(), err)

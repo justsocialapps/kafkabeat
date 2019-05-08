@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package tcp
 
 import (
@@ -9,8 +26,10 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
+	"github.com/elastic/beats/libbeat/outputs/transport"
 
 	"github.com/elastic/beats/heartbeat/monitors"
+	"github.com/elastic/beats/heartbeat/monitors/active/dialchain"
 )
 
 func init() {
@@ -26,55 +45,68 @@ type connURL struct {
 }
 
 func create(
-	info monitors.Info,
+	name string,
 	cfg *common.Config,
-) ([]monitors.Job, error) {
+) (jobs []monitors.Job, endpoints int, err error) {
 	config := DefaultConfig
 	if err := cfg.Unpack(&config); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	tls, err := outputs.LoadTLSConfig(config.TLS)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	defaultScheme := "tcp"
 	if tls != nil {
 		defaultScheme = "ssl"
 	}
-	addrs, err := collectHosts(&config, defaultScheme)
+
+	schemeHosts, err := collectHosts(&config, defaultScheme)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	if config.Socks5.URL != "" && !config.Socks5.LocalResolve {
-		var jobs []monitors.Job
-		for _, addr := range addrs {
-			scheme, host := addr.Scheme, addr.Host
-			for _, port := range addr.Ports {
-				job, err := newTCPMonitorHostJob(scheme, host, port, tls, &config)
-				if err != nil {
-					return nil, err
-				}
-				jobs = append(jobs, job)
-			}
+	typ := config.Name
+	timeout := config.Timeout
+	validator := makeValidateConn(&config)
+
+	for scheme, eps := range schemeHosts {
+		schemeTLS := tls
+		if scheme == "tcp" || scheme == "plain" {
+			schemeTLS = nil
 		}
-		return jobs, nil
-	}
 
-	jobs := make([]monitors.Job, len(addrs))
-	for i, addr := range addrs {
-		jobs[i], err = newTCPMonitorIPsJob(addr, tls, &config)
+		db, err := dialchain.NewBuilder(dialchain.BuilderSettings{
+			Timeout: timeout,
+			Socks5:  config.Socks5,
+			TLS:     schemeTLS,
+		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
+
+		epJobs, err := dialchain.MakeDialerJobs(db, typ, scheme, eps, config.Mode,
+			func(dialer transport.Dialer, addr string) (common.MapStr, error) {
+				return pingHost(dialer, addr, timeout, validator)
+			})
+		if err != nil {
+			return nil, 0, err
+		}
+
+		jobs = append(jobs, epJobs...)
 	}
-	return jobs, nil
+
+	numHosts := 0
+	for _, hosts := range schemeHosts {
+		numHosts += len(hosts)
+	}
+	return jobs, numHosts, nil
 }
 
-func collectHosts(config *Config, defaultScheme string) ([]connURL, error) {
-	var addrs []connURL
+func collectHosts(config *Config, defaultScheme string) (map[string][]dialchain.Endpoint, error) {
+	endpoints := map[string][]dialchain.Endpoint{}
 	for _, h := range config.Hosts {
 		scheme := defaultScheme
 		host := ""
@@ -109,11 +141,10 @@ func collectHosts(config *Config, defaultScheme string) ([]connURL, error) {
 			return nil, fmt.Errorf("host '%v' missing port number", h)
 		}
 
-		addrs = append(addrs, connURL{
-			Scheme: scheme,
-			Host:   host,
-			Ports:  ports,
+		endpoints[scheme] = append(endpoints[scheme], dialchain.Endpoint{
+			Host:  host,
+			Ports: ports,
 		})
 	}
-	return addrs, nil
+	return endpoints, nil
 }

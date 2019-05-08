@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build integration
 
 package fileset
@@ -5,18 +22,18 @@ package fileset
 import (
 	"encoding/json"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
+	"github.com/elastic/beats/libbeat/outputs/elasticsearch/estest"
 )
 
 func TestLoadPipeline(t *testing.T) {
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if !hasIngest(client) {
-		t.Skip("Skip tests because ingest is missing in this elasticsearch version: %s", client.GetVersion())
+		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
 
 	client.Request("DELETE", "/_ingest/pipeline/my-pipeline-id", "", nil, nil)
@@ -33,7 +50,7 @@ func TestLoadPipeline(t *testing.T) {
 		},
 	}
 
-	err := loadPipeline(client, "my-pipeline-id", content)
+	err := loadPipeline(client, "my-pipeline-id", content, false)
 	assert.NoError(t, err)
 
 	status, _, err := client.Request("GET", "/_ingest/pipeline/my-pipeline-id", "", nil, nil)
@@ -42,9 +59,17 @@ func TestLoadPipeline(t *testing.T) {
 
 	// loading again shouldn't actually update the pipeline
 	content["description"] = "describe pipeline 2"
-	err = loadPipeline(client, "my-pipeline-id", content)
+	err = loadPipeline(client, "my-pipeline-id", content, false)
 	assert.NoError(t, err)
+	checkUploadedPipeline(t, client, "describe pipeline")
 
+	// loading again updates the pipeline
+	err = loadPipeline(client, "my-pipeline-id", content, true)
+	assert.NoError(t, err)
+	checkUploadedPipeline(t, client, "describe pipeline 2")
+}
+
+func checkUploadedPipeline(t *testing.T, client *elasticsearch.Client, expectedDescription string) {
 	status, response, err := client.Request("GET", "/_ingest/pipeline/my-pipeline-id", "", nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, status)
@@ -52,14 +77,14 @@ func TestLoadPipeline(t *testing.T) {
 	var res map[string]interface{}
 	err = json.Unmarshal(response, &res)
 	if assert.NoError(t, err) {
-		assert.Equal(t, "describe pipeline", res["my-pipeline-id"].(map[string]interface{})["description"], string(response))
+		assert.Equal(t, expectedDescription, res["my-pipeline-id"].(map[string]interface{})["description"], string(response))
 	}
 }
 
 func TestSetupNginx(t *testing.T) {
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if !hasIngest(client) {
-		t.Skip("Skip tests because ingest is missing in this elasticsearch version: %s", client.GetVersion())
+		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
 
 	client.Request("DELETE", "/_ingest/pipeline/filebeat-5.2.0-nginx-access-default", "", nil, nil)
@@ -77,7 +102,7 @@ func TestSetupNginx(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = reg.LoadPipelines(client)
+	err = reg.LoadPipelines(client, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,9 +114,9 @@ func TestSetupNginx(t *testing.T) {
 }
 
 func TestAvailableProcessors(t *testing.T) {
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if !hasIngest(client) {
-		t.Skip("Skip tests because ingest is missing in this elasticsearch version: %s", client.GetVersion())
+		t.Skip("Skip tests because ingest is missing in this elasticsearch version: ", client.GetVersion())
 	}
 	// these exists on our integration test setup
 	requiredProcessors := []ProcessorRequirement{
@@ -116,11 +141,5 @@ func TestAvailableProcessors(t *testing.T) {
 
 func hasIngest(client *elasticsearch.Client) bool {
 	v := client.GetVersion()
-	majorVersion := string(v[0])
-	version, err := strconv.Atoi(majorVersion)
-	if err != nil {
-		return true
-	}
-
-	return version >= 5
+	return v.Major >= 5
 }

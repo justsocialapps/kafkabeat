@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build integration
 
 package info
@@ -6,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/libbeat/tests/compose"
 	mbtest "github.com/elastic/beats/metricbeat/mb/testing"
 	"github.com/elastic/beats/metricbeat/module/redis"
 
@@ -20,6 +38,8 @@ const (
 var redisHost = redis.GetRedisEnvHost() + ":" + redis.GetRedisEnvPort()
 
 func TestFetch(t *testing.T) {
+	compose.EnsureUp(t, "redis")
+
 	f := mbtest.NewEventFetcher(t, getConfig(""))
 	event, err := f.Fetch()
 	if err != nil {
@@ -29,12 +49,14 @@ func TestFetch(t *testing.T) {
 	t.Logf("%s/%s event: %+v", f.Module().Name(), f.Name(), event)
 
 	// Check fields
-	assert.Equal(t, 8, len(event))
+	assert.Equal(t, 9, len(event))
 	server := event["server"].(common.MapStr)
 	assert.Equal(t, "standalone", server["mode"])
 }
 
 func TestData(t *testing.T) {
+	compose.EnsureUp(t, "redis")
+
 	f := mbtest.NewEventFetcher(t, getConfig(""))
 
 	err := mbtest.WriteEvent(f, t)
@@ -44,6 +66,8 @@ func TestData(t *testing.T) {
 }
 
 func TestPasswords(t *testing.T) {
+	compose.EnsureUp(t, "redis")
+
 	// Add password and ensure it gets reset
 	defer func() {
 		err := resetPassword(redisHost, password)

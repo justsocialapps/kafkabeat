@@ -1,8 +1,26 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build !integration
 
 package common
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -218,4 +236,23 @@ func TestReadString(t *testing.T) {
 		assert.Equal(t, test.Err, err)
 		assert.Equal(t, test.Output, res)
 	}
+}
+
+func TestRandomBytesLength(t *testing.T) {
+	r1, _ := RandomBytes(5)
+	assert.Equal(t, len(r1), 5)
+
+	r2, _ := RandomBytes(4)
+	assert.Equal(t, len(r2), 4)
+	assert.NotEqual(t, string(r1[:]), string(r2[:]))
+}
+
+func TestRandomBytes(t *testing.T) {
+	v1, err := RandomBytes(10)
+	assert.NoError(t, err)
+	v2, err := RandomBytes(10)
+	assert.NoError(t, err)
+
+	// unlikely to get 2 times the same results
+	assert.False(t, bytes.Equal(v1, v2))
 }

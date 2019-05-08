@@ -20,7 +20,6 @@ class Test(BaseTest):
 
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/docker.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -42,13 +41,12 @@ class Test(BaseTest):
         """
         self.render_config_template(
             path=os.path.abspath(self.working_dir) + "/log/*",
-            json=dict(message_key="log", keys_under_root=True),
+            json=dict(message_key="log"),
             exclude_lines=["windows"]
         )
 
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/docker.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -61,45 +59,10 @@ class Test(BaseTest):
         output = self.read_output()
         assert len(output) == 19
 
-        assert all("log" in o for o in output)
-        assert all("time" in o for o in output)
-        assert all(o["stream"] == "stdout" for o in output)
-        assert all("windows" not in o["log"] for o in output)
-
-    def test_docker_logs_multiline(self):
-        """
-        Should be able to do multiline on docker logs.
-        """
-        self.render_config_template(
-            path=os.path.abspath(self.working_dir) + "/log/*",
-            json=dict(message_key="log", keys_under_root=True),
-            multiline=True,
-            pattern="^\[log\]",
-            match="after",
-            negate="true"
-        )
-
-        os.mkdir(self.working_dir + "/log/")
-        self.copy_files(["logs/docker_multiline.log"],
-                        source_dir="../files",
-                        target_dir="log")
-
-        proc = self.start_beat()
-        self.wait_until(
-            lambda: self.output_has(lines=3),
-            max_timeout=10)
-
-        proc.check_kill_and_wait()
-
-        output = self.read_output()
-        assert len(output) == 3
-
-        assert all("time" in o for o in output)
-        assert all("log" in o for o in output)
-        assert all("message" not in o for o in output)
-        assert all(o["stream"] == "stdout" for o in output)
-        assert output[1]["log"] == \
-            "[log] This one is\n on multiple\n lines"
+        assert all("json.log" in o for o in output)
+        assert all("json.time" in o for o in output)
+        assert all(o["json.stream"] == "stdout" for o in output)
+        assert all("windows" not in o["json.log"] for o in output)
 
     def test_simple_json_overwrite(self):
         """
@@ -116,7 +79,6 @@ class Test(BaseTest):
 
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/json_override.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -129,6 +91,28 @@ class Test(BaseTest):
         output = self.read_output()[0]
         assert output["source"] == "hello"
         assert output["message"] == "test source"
+
+    def test_json_add_tags(self):
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            json=dict(
+                keys_under_root=True,
+            ),
+            agent_tags=["tag3", "tag4"]
+        )
+        os.mkdir(self.working_dir + "/log/")
+        self.copy_files(["logs/json_tag.log"],
+                        target_dir="log")
+
+        proc = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=10)
+
+        proc.check_kill_and_wait()
+
+        output = self.read_output()[0]
+        assert sorted(output["tags"]) == ["tag1", "tag2", "tag3", "tag4"]
 
     def test_config_no_msg_key_filtering(self):
         """
@@ -185,7 +169,6 @@ class Test(BaseTest):
         )
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/json_timestamp.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -227,7 +210,6 @@ class Test(BaseTest):
         )
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/json_type.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -272,7 +254,6 @@ class Test(BaseTest):
 
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/json_null.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -292,6 +273,72 @@ class Test(BaseTest):
 
         # We drop null values during the generic event conversion.
         assert "res" not in o
+
+    def test_json_decoding_error_true(self):
+        """
+        Test if json_decoding_error is set to true, that no errors are logged.
+        """
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            json=dict(
+                message_key="message",
+                ignore_decoding_error=True
+            ),
+        )
+
+        os.mkdir(self.working_dir + "/log/")
+
+        testfile1 = self.working_dir + "/log/test.log"
+
+        message = "invalidjson"
+        with open(testfile1, 'a') as f:
+            f.write(message + "\n")
+
+        proc = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=10)
+        proc.check_kill_and_wait()
+
+        output = self.read_output(
+            required_fields=["@timestamp"],
+        )
+        assert len(output) == 1
+        assert output[0]["message"] == message
+        assert False == self.log_contains_count("Error decoding JSON")
+
+    def test_json_decoding_error_false(self):
+        """
+        Test if json_decoding_error is set to false, that an errors is logged.
+        """
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            json=dict(
+                message_key="message",
+                ignore_decoding_error=False
+            ),
+        )
+
+        os.mkdir(self.working_dir + "/log/")
+
+        testfile1 = self.working_dir + "/log/test.log"
+
+        message = "invalidjson"
+        with open(testfile1, 'a') as f:
+            f.write(message + "\n")
+
+        proc = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=10)
+        proc.check_kill_and_wait()
+
+        output = self.read_output(
+            required_fields=["@timestamp"],
+        )
+        assert len(output) == 1
+        assert output[0]["message"] == message
+        assert True == self.log_contains_count("Error decoding JSON")
 
     def test_with_generic_filtering_remove_headers(self):
         """
@@ -316,7 +363,6 @@ class Test(BaseTest):
 
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/json_null.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()
@@ -355,7 +401,6 @@ class Test(BaseTest):
         )
         os.mkdir(self.working_dir + "/log/")
         self.copy_files(["logs/json_int.log"],
-                        source_dir="../files",
                         target_dir="log")
 
         proc = self.start_beat()

@@ -1,28 +1,39 @@
 {
-    "@timestamp": "2016-05-23T08:05:34.853Z",
+    "@timestamp": "2017-10-12T08:05:34.853Z",
     "beat": {
         "hostname": "host.example.com",
         "name": "host.example.com"
     },
     "kafka": {
+        "broker": {
+            "address": "172.18.0.2:9092",
+            "id": 0
+        },
         "partition": {
             "broker": {
-                "address": "kafka:9092",
+                "address": "172.18.0.2:9092",
                 "id": 0
             },
+            "id": 0,
             "offset": {
-                "newest": 11,
+                "newest": 0,
                 "oldest": 0
             },
             "partition": {
                 "id": 0,
                 "insync_replica": true,
+                "is_leader": true,
                 "leader": 0,
                 "replica": 0
             },
             "topic": {
-                "name": "test-metricbeat-70692474374989458"
-            }
+                "name": "foo-1538389014-739473801"
+            },
+            "topic_broker_id": "0-foo-1538389014-739473801-0",
+            "topic_id": "0-foo-1538389014-739473801"
+        },
+        "topic": {
+            "name": "foo-1538389014-739473801"
         }
     },
     "metricset": {
@@ -30,6 +41,5 @@
         "module": "kafka",
         "name": "partition",
         "rtt": 115
-    },
-    "type": "metricsets"
+    }
 }

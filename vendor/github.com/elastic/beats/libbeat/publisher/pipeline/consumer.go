@@ -1,12 +1,29 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package pipeline
 
 import (
 	"github.com/elastic/beats/libbeat/common/atomic"
 	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/publisher/broker"
+	"github.com/elastic/beats/libbeat/publisher/queue"
 )
 
-// eventConsumer collects and forwards events from the broker to the outputs work queue.
+// eventConsumer collects and forwards events from the queue to the outputs work queue.
 // The eventConsumer is managed by the controller and receives additional pause signals
 // from the retryer in case of too many events failing to be send or if retryer
 // is receiving cancelled batches from outputs to be closed on output reloading.
@@ -20,15 +37,15 @@ type eventConsumer struct {
 	wait  atomic.Bool
 	sig   chan consumerSignal
 
-	broker   broker.Broker
-	consumer broker.Consumer
+	queue    queue.Queue
+	consumer queue.Consumer
 
 	out *outputGroup
 }
 
 type consumerSignal struct {
 	tag      consumerEventTag
-	consumer broker.Consumer
+	consumer queue.Consumer
 	out      *outputGroup
 }
 
@@ -42,7 +59,7 @@ const (
 
 func newEventConsumer(
 	log *logp.Logger,
-	broker broker.Broker,
+	queue queue.Queue,
 	ctx *batchContext,
 ) *eventConsumer {
 	c := &eventConsumer{
@@ -51,8 +68,8 @@ func newEventConsumer(
 		sig:    make(chan consumerSignal, 3),
 		out:    nil,
 
-		broker:   broker,
-		consumer: broker.Consumer(),
+		queue:    queue,
+		consumer: queue.Consumer(),
 		ctx:      ctx,
 	}
 
@@ -106,15 +123,15 @@ func (c *eventConsumer) updOutput(grp *outputGroup) {
 		out: grp,
 	}
 
-	// update eventConsumer with new broker connection
-	c.consumer = c.broker.Consumer()
+	// update eventConsumer with new queue connection
+	c.consumer = c.queue.Consumer()
 	c.sig <- consumerSignal{
 		tag:      sigConsumerUpdateInput,
 		consumer: c.consumer,
 	}
 }
 
-func (c *eventConsumer) loop(consumer broker.Consumer) {
+func (c *eventConsumer) loop(consumer queue.Consumer) {
 	log := c.logger
 
 	log.Debug("start pipeline event consumer")
@@ -147,14 +164,14 @@ func (c *eventConsumer) loop(consumer broker.Consumer) {
 	for {
 		if !paused && c.out != nil && consumer != nil && batch == nil {
 			out = c.out.workQueue
-			brokerBatch, err := consumer.Get(c.out.batchSize)
+			queueBatch, err := consumer.Get(c.out.batchSize)
 			if err != nil {
 				out = nil
 				consumer = nil
 				continue
 			}
 
-			batch = newBatch(c.ctx, brokerBatch, c.out.timeToLive)
+			batch = newBatch(c.ctx, queueBatch, c.out.timeToLive)
 			paused = c.paused()
 			if paused {
 				out = nil

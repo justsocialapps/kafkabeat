@@ -1,16 +1,33 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package beater
 
 import (
 	"sync"
 
+	"github.com/elastic/beats/filebeat/input/file"
 	"github.com/elastic/beats/filebeat/registrar"
-	"github.com/elastic/beats/filebeat/util"
 	"github.com/elastic/beats/libbeat/monitoring"
 )
 
 type registrarLogger struct {
 	done chan struct{}
-	ch   chan<- []*util.Data
+	ch   chan<- []file.State
 }
 
 type finishedLogger struct {
@@ -32,7 +49,7 @@ func newRegistrarLogger(reg *registrar.Registrar) *registrarLogger {
 }
 
 func (l *registrarLogger) Close() { close(l.done) }
-func (l *registrarLogger) Published(events []*util.Data) bool {
+func (l *registrarLogger) Published(states []file.State) {
 	select {
 	case <-l.done:
 		// set ch to nil, so no more events will be send after channel close signal
@@ -40,9 +57,7 @@ func (l *registrarLogger) Published(events []*util.Data) bool {
 		// Note: nil channels will block, so only done channel will be actively
 		//       report 'closed'.
 		l.ch = nil
-		return false
-	case l.ch <- events:
-		return true
+	case l.ch <- states:
 	}
 }
 
@@ -50,11 +65,10 @@ func newFinishedLogger(wg *eventCounter) *finishedLogger {
 	return &finishedLogger{wg}
 }
 
-func (l *finishedLogger) Published(events []*util.Data) bool {
-	for range events {
+func (l *finishedLogger) Published(n int) bool {
+	for i := 0; i < n; i++ {
 		l.wg.Done()
 	}
-
 	return true
 }
 

@@ -2,11 +2,12 @@
   type: group
   description: >
     virtualmachine
+  release: beta
   fields:
-    - name: datacenter
+    - name: host
       type: keyword
       description: >
-        Datacenter name
+        Host name
     - name: name
       type: keyword
       description: >
@@ -38,5 +39,9 @@
     - name: custom_fields
       type: object
       object_type: keyword
-      descripton: >
-        Custom fields      
+      description: >
+        Custom fields
+    - name: network_names
+      type: keyword
+      description: >
+        Network names

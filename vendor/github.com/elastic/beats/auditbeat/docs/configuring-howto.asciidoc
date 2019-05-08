@@ -22,7 +22,9 @@ The following topics describe how to configure {beatname_uc}:
 * <<configuration-{beatname_lc}>>
 * <<configuration-general-options>>
 * <<{beatname_lc}-configuration-reloading>>
+* <<configuring-internal-queue>>
 * <<configuring-output>>
+* <<ilm>>
 * <<configuration-ssl>>
 * <<filtering-and-enhancing-data>>
 * <<configuring-ingest-node>>
@@ -33,6 +35,9 @@ The following topics describe how to configure {beatname_uc}:
 * <<configuration-logging>>
 * <<using-environ-vars>>
 * <<yaml-tips>>
+* <<regexp-support>>
+* <<http-endpoint>>
+* <<{beatname_lc}-reference-yml>>
 
 After changing configuration settings, you need to restart {beatname_uc} to
 pick up the changes.
@@ -45,29 +50,36 @@ include::./auditbeat-general-options.asciidoc[]
 
 include::./reload-configuration.asciidoc[]
 
-:allplatforms:
-include::../../libbeat/docs/outputconfig.asciidoc[]
+include::{libbeat-dir}/docs/queueconfig.asciidoc[]
 
-include::../../libbeat/docs/shared-ssl-config.asciidoc[]
+include::{libbeat-dir}/docs/outputconfig.asciidoc[]
+
+include::{libbeat-dir}/docs/shared-ilm.asciidoc[]
+
+include::{libbeat-dir}/docs/shared-ssl-config.asciidoc[]
 
 include::./auditbeat-filtering.asciidoc[]
 
-include::../../libbeat/docs/shared-config-ingest.asciidoc[]
+include::{libbeat-dir}/docs/shared-config-ingest.asciidoc[]
 
-include::../../libbeat/docs/shared-path-config.asciidoc[]
+include::{libbeat-dir}/docs/shared-path-config.asciidoc[]
 
-include::../../libbeat/docs/shared-kibana-config.asciidoc[]
+include::{libbeat-dir}/docs/shared-kibana-config.asciidoc[]
 
-include::../../libbeat/docs/setup-config.asciidoc[]
+include::{libbeat-dir}/docs/setup-config.asciidoc[]
 
-include::../../libbeat/docs/loggingconfig.asciidoc[]
-
-:standalone:
-include::../../libbeat/docs/shared-env-vars.asciidoc[]
+include::{libbeat-dir}/docs/loggingconfig.asciidoc[]
 
 :standalone:
-:allplatforms:
-include::../../libbeat/docs/yaml.asciidoc[]
+include::{libbeat-dir}/docs/shared-env-vars.asciidoc[]
+:standalone!:
 
-include::../../libbeat/docs/reference-yml.asciidoc[]
+:standalone:
+include::{libbeat-dir}/docs/yaml.asciidoc[]
+:standalone!:
 
+include::{libbeat-dir}/docs/regexp.asciidoc[]
+
+include::{libbeat-dir}/docs/http-endpoint.asciidoc[]
+
+include::{libbeat-dir}/docs/reference-yml.asciidoc[]

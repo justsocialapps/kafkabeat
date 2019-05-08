@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build integration
 
 package mlimporter
@@ -11,7 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
+	"github.com/elastic/beats/libbeat/outputs/elasticsearch/estest"
 )
 
 const sampleJob = `
@@ -24,7 +41,6 @@ const sampleJob = `
       {
         "detector_description": "Event rate for nginx.access.response_code",
         "function": "count",
-        "detector_rules": [],
         "partition_field_name": "nginx.access.response_code"
       }
     ],
@@ -43,13 +59,11 @@ const sampleJob = `
 const sampleDatafeed = `
 {
     "job_id": "PLACEHOLDER",
-    "query_delay": "60s",
-    "frequency": "60s",
     "indexes": [
       "filebeat-*"
     ],
     "types": [
-      "_default_",
+      "doc",
       "log"
     ],
     "query": {
@@ -88,11 +102,9 @@ const sampleDatafeed = `
 `
 
 func TestImportJobs(t *testing.T) {
-	client := elasticsearch.GetTestingElasticsearch(t)
+	logp.TestingSetup()
 
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"*"})
-	}
+	client := estest.GetTestingElasticsearch(t)
 
 	haveXpack, err := HaveXpackML(client)
 	assert.NoError(t, err)
@@ -167,7 +179,7 @@ func TestImportJobs(t *testing.T) {
 		if datafeed.DatafeedId == "datafeed-test-ml-config" {
 			found = true
 			assert.Equal(t, datafeed.JobId, "test-ml-config")
-			assert.Equal(t, datafeed.QueryDelay, "60s")
+			assert.Equal(t, datafeed.QueryDelay, "87034ms")
 		}
 	}
 	assert.True(t, found)

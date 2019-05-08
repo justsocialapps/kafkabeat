@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package beater
 
 import (
@@ -11,12 +28,10 @@ import (
 
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/common/droppriv"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/processors"
-	"github.com/elastic/beats/libbeat/publisher/bc/publisher"
-	pub "github.com/elastic/beats/libbeat/publisher/beat"
 	"github.com/elastic/beats/libbeat/service"
+
 	"github.com/elastic/beats/packetbeat/config"
 	"github.com/elastic/beats/packetbeat/decoder"
 	"github.com/elastic/beats/packetbeat/flows"
@@ -27,22 +42,21 @@ import (
 	"github.com/elastic/beats/packetbeat/protos/udp"
 	"github.com/elastic/beats/packetbeat/publish"
 	"github.com/elastic/beats/packetbeat/sniffer"
+
+	// Add packetbeat default processors
+	_ "github.com/elastic/beats/packetbeat/processor/add_kubernetes_metadata"
 )
 
 // Beater object. Contains all objects needed to run the beat
 type packetbeat struct {
 	config      config.Config
 	cmdLineArgs flags
-	sniff       *sniffer.SnifferSetup
+	sniff       *sniffer.Sniffer
 
 	// publisher/pipeline
-	pipeline publisher.Publisher
+	pipeline beat.Pipeline
 	transPub *publish.TransactionPublisher
-
-	services []interface {
-		Start()
-		Stop()
-	}
+	flows    *flows.Flows
 }
 
 type flags struct {
@@ -95,15 +109,22 @@ func New(b *beat.Beat, rawConfig *common.Config) (beat.Beater, error) {
 
 // init packetbeat components
 func (pb *packetbeat) init(b *beat.Beat) error {
+	var err error
 	cfg := &pb.config
-	err := procs.ProcWatcher.Init(cfg.Procs)
-	if err != nil {
-		logp.Critical(err.Error())
-		return err
+	// Enable the process watcher only if capturing live traffic
+	if cfg.Interfaces.File == "" {
+		err = procs.ProcWatcher.Init(cfg.Procs)
+		if err != nil {
+			logp.Critical(err.Error())
+			return err
+		}
+	} else {
+		logp.Info("Process watcher disabled when file input is used")
 	}
 
 	pb.pipeline = b.Publisher
 	pb.transPub, err = publish.NewTransactionPublisher(
+		b.Info.Name,
 		b.Publisher,
 		pb.config.IgnoreOutgoing,
 		pb.config.Interfaces.File == "",
@@ -118,75 +139,11 @@ func (pb *packetbeat) init(b *beat.Beat) error {
 		return fmt.Errorf("Initializing protocol analyzers failed: %v", err)
 	}
 
-	logp.Debug("main", "Initializing sniffer")
-	err = pb.setupSniffer()
-	if err != nil {
-		return fmt.Errorf("Initializing sniffer failed: %v", err)
-	}
-
-	return nil
-}
-
-func (pb *packetbeat) Run(b *beat.Beat) error {
-	defer func() {
-		if service.ProfileEnabled() {
-			logp.Debug("main", "Waiting for streams and transactions to expire...")
-			time.Sleep(time.Duration(float64(protos.DefaultTransactionExpiration) * 1.2))
-			logp.Debug("main", "Streams and transactions should all be expired now.")
-		}
-	}()
-
-	// This needs to be after the sniffer Init but before the sniffer Run.
-	if err := droppriv.DropPrivileges(pb.config.RunOptions); err != nil {
+	if err := pb.setupFlows(); err != nil {
 		return err
 	}
 
-	// start services
-	for _, service := range pb.services {
-		service.Start()
-	}
-
-	var wg sync.WaitGroup
-	errC := make(chan error, 1)
-
-	// Run the sniffer in background
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		defer pb.transPub.Stop()
-
-		err := pb.sniff.Run()
-		if err != nil {
-			errC <- fmt.Errorf("Sniffer main loop failed: %v", err)
-		}
-	}()
-
-	logp.Debug("main", "Waiting for the sniffer to finish")
-	wg.Wait()
-	select {
-	default:
-	case err := <-errC:
-		return err
-	}
-
-	// kill services
-	for _, service := range pb.services {
-		service.Stop()
-	}
-
-	timeout := pb.config.ShutdownTimeout
-	if timeout > 0 {
-		time.Sleep(timeout)
-	}
-
-	return nil
-}
-
-// Called by the Beat stop function
-func (pb *packetbeat) Stop() {
-	logp.Info("Packetbeat send stop signal")
-	pb.sniff.Stop()
+	return pb.setupSniffer()
 }
 
 func (pb *packetbeat) setupSniffer() error {
@@ -205,35 +162,90 @@ func (pb *packetbeat) setupSniffer() error {
 		filter = protos.Protos.BpfFilter(withVlans, withICMP)
 	}
 
-	pb.sniff = &sniffer.SnifferSetup{}
-	return pb.sniff.Init(false, filter, pb.createWorker, &config.Interfaces)
+	pb.sniff, err = sniffer.New(false, filter, pb.createWorker, config.Interfaces)
+	return err
+}
+
+func (pb *packetbeat) setupFlows() error {
+	config := &pb.config
+	if !config.Flows.IsEnabled() {
+		return nil
+	}
+
+	processors, err := processors.New(config.Flows.Processors)
+	if err != nil {
+		return err
+	}
+
+	client, err := pb.pipeline.ConnectWith(beat.ClientConfig{
+		EventMetadata: config.Flows.EventMetadata,
+		Processor:     processors,
+	})
+	if err != nil {
+		return err
+	}
+
+	pb.flows, err = flows.NewFlows(client.PublishAll, config.Flows)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (pb *packetbeat) Run(b *beat.Beat) error {
+	defer func() {
+		if service.ProfileEnabled() {
+			logp.Debug("main", "Waiting for streams and transactions to expire...")
+			time.Sleep(time.Duration(float64(protos.DefaultTransactionExpiration) * 1.2))
+			logp.Debug("main", "Streams and transactions should all be expired now.")
+		}
+	}()
+
+	defer pb.transPub.Stop()
+
+	timeout := pb.config.ShutdownTimeout
+	if timeout > 0 {
+		defer time.Sleep(timeout)
+	}
+
+	if pb.flows != nil {
+		pb.flows.Start()
+		defer pb.flows.Stop()
+	}
+
+	var wg sync.WaitGroup
+	errC := make(chan error, 1)
+
+	// Run the sniffer in background
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		err := pb.sniff.Run()
+		if err != nil {
+			errC <- fmt.Errorf("Sniffer main loop failed: %v", err)
+		}
+	}()
+
+	logp.Debug("main", "Waiting for the sniffer to finish")
+	wg.Wait()
+	select {
+	default:
+	case err := <-errC:
+		return err
+	}
+
+	return nil
+}
+
+// Called by the Beat stop function
+func (pb *packetbeat) Stop() {
+	logp.Info("Packetbeat send stop signal")
+	pb.sniff.Stop()
 }
 
 func (pb *packetbeat) createWorker(dl layers.LinkType) (sniffer.Worker, error) {
-	var f *flows.Flows
-	var err error
-	config := &pb.config
-
-	if config.Flows.IsEnabled() {
-		processors, err := processors.New(config.Flows.Processors)
-		if err != nil {
-			return nil, err
-		}
-
-		client, err := pb.pipeline.ConnectX(pub.ClientConfig{
-			EventMetadata: config.Flows.EventMetadata,
-			Processor:     processors,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		f, err = flows.NewFlows(client.PublishAll, config.Flows)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	var icmp4 icmp.ICMPv4Processor
 	var icmp6 icmp.ICMPv6Processor
 	cfg, err := pb.icmpConfig()
@@ -265,14 +277,11 @@ func (pb *packetbeat) createWorker(dl layers.LinkType) (sniffer.Worker, error) {
 		return nil, err
 	}
 
-	worker, err := decoder.New(f, dl, icmp4, icmp6, tcp, udp)
+	worker, err := decoder.New(pb.flows, dl, icmp4, icmp6, tcp, udp)
 	if err != nil {
 		return nil, err
 	}
 
-	if f != nil {
-		pb.services = append(pb.services, f)
-	}
 	return worker, nil
 }
 
@@ -296,7 +305,7 @@ func (pb *packetbeat) icmpConfig() (*common.Config, error) {
 		}
 
 		if icmp != nil {
-			return nil, errors.New("More then one icmp confgigurations found")
+			return nil, errors.New("More then one icmp configurations found")
 		}
 
 		icmp = cfg

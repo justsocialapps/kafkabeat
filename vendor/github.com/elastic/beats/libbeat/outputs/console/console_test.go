@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build !integration
 
 package console
@@ -10,14 +27,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/common/fmtstr"
+	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/outputs/codec"
 	"github.com/elastic/beats/libbeat/outputs/codec/format"
 	"github.com/elastic/beats/libbeat/outputs/codec/json"
 	"github.com/elastic/beats/libbeat/outputs/outest"
 	"github.com/elastic/beats/libbeat/publisher"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 )
 
 // capture stdout and return captured string
@@ -60,19 +78,19 @@ func TestConsoleOutput(t *testing.T) {
 	}{
 		{
 			"single json event (pretty=false)",
-			json.New(false),
+			json.New(false, true, "1.2.3"),
 			[]beat.Event{
 				{Fields: event("field", "value")},
 			},
-			"{\"@timestamp\":\"0001-01-01T00:00:00.000Z\",\"@metadata\":{\"beat\":\"test\",\"type\":\"doc\"},\"field\":\"value\"}\n",
+			"{\"@timestamp\":\"0001-01-01T00:00:00.000Z\",\"@metadata\":{\"beat\":\"test\",\"type\":\"doc\",\"version\":\"1.2.3\"},\"field\":\"value\"}\n",
 		},
 		{
 			"single json event (pretty=true)",
-			json.New(true),
+			json.New(true, true, "1.2.3"),
 			[]beat.Event{
 				{Fields: event("field", "value")},
 			},
-			"{\n  \"@timestamp\": \"0001-01-01T00:00:00.000Z\",\n  \"@metadata\": {\n    \"beat\": \"test\",\n    \"type\": \"doc\"\n  },\n  \"field\": \"value\"\n}\n",
+			"{\n  \"@timestamp\": \"0001-01-01T00:00:00.000Z\",\n  \"@metadata\": {\n    \"beat\": \"test\",\n    \"type\": \"doc\",\n    \"version\": \"1.2.3\"\n  },\n  \"field\": \"value\"\n}\n",
 		},
 		// TODO: enable test after update fmtstr support to beat.Event
 		{
@@ -104,7 +122,7 @@ func TestConsoleOutput(t *testing.T) {
 
 func run(codec codec.Codec, batches ...publisher.Batch) (string, error) {
 	return withStdout(func() {
-		c, _ := newConsole("test", nil, codec)
+		c, _ := newConsole("test", outputs.NewNilObserver(), codec)
 		for _, b := range batches {
 			c.Publish(b)
 		}

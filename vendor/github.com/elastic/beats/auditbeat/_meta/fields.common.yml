@@ -3,34 +3,204 @@
   description: >
     Contains common fields available in all event types.
   fields:
+  - name: event.module
+    description: >
+      The name of the module that generated the event.
 
-    - name: metricset.module
-      description: >
-        The name of the module that generated the event.
+  - name: event.dataset
+    description: >
+      The name of the module's dataset that generated the event.
 
-    - name: metricset.name
-      description: >
-        The name of the metricset that generated the event.
+  - name: event.action
+    type: keyword
+    example: logged-in
+    description: >
+      Action describes the change that triggered the event.
 
-    - name: metricset.host
-      description: >
-        Hostname of the machine from which the metricset was collected. This
-        field may not be present when the data was collected locally.
+      For the file integrity module the possible values are:
+      attributes_modified, created, deleted, updated, moved, and config_change.
 
-    - name: metricset.rtt
-      type: long
-      required: true
-      description: >
-        Event round trip time in microseconds.
+  - name: event.id
+    type: keyword
+    description: >
+      Unique ID to describe the event.
+    example: 8a4f500d
 
-    - name: metricset.namespace
+  - name: event.kind
+    type: keyword
+    description: >
+      The kind of the event.
+
+      This gives information about what type of information the event
+      contains, without being specific to the contents of the event.  Examples
+      are `event`, `state`, `alarm`. Warning: In future versions of ECS, we
+      plan to provide a list of acceptable values for this field, please use
+      with caution.
+    example: state
+
+  - name: message
+    type: text
+    example: "Hello World"
+    description: >
+      For log events the message field contains the log message.
+
+      In other use cases the message field can be used to concatenate
+      different values which are then freely searchable. If multiple
+      messages exist, they can be combined into one message.
+
+  - name: process
+    title: Process
+    group: 2
+    description: >
+      These fields contain information about a process.
+      These fields can help you correlate metrics information with a process id/name
+      from a log message.  The `process.pid` often stays in the metric itself and is
+      copied to the global field for correlation.
+    type: group
+    fields:
+      - name: start
+        type: date
+        example: "2016-05-23T08:05:34.853Z"
+        description: >
+          The time the process started.
+      - name: working_directory
+        type: keyword
+        example: /home/alice
+        description: >
+          The working directory of the process.
+      - name: executable
+        type: keyword
+        description: >
+          Absolute path to the process executable.
+        example: /usr/bin/ssh
+
+  - name: network.type
+    type: keyword
+    description: >
+      In the OSI Model this would be the Network Layer. IPv4, IPv6, IPSec, PIM, etc
+    example: IPv4
+
+  - name: user
+    title: User
+    description: >
+      The user fields describe information about the user that is relevant
+      to  the event. Fields can have one entry or multiple entries. If a
+      user has more than one id, provide an array that includes all of
+      them.
+    type: group
+    fields:
+      - name: id
+        type: keyword
+        description: >
+          One or multiple unique identifiers of the user.
+      - name: name
+        type: keyword
+        example: albert
+        description: >
+          Short name or login of the user.
+
+  - name: file
+    type: group
+    description: File attributes.
+    fields:
+    - name: path
+      type: text
+      description: The path to the file.
+      multi_fields:
+      - name: raw
+        type: keyword
+        description: >
+          The path to the file. This is a non-analyzed field that is useful
+          for aggregations.
+
+    - name: target_path
       type: keyword
-      description: >
-        Namespace of dynamic metricsets.
+      description: The target path for symlinks.
 
     - name: type
-      required: true
-      example: metricsets
-      description: >
-        The document type. Always set to "metricsets".
+      type: keyword
+      description: The file type (file, dir, or symlink).
 
+    - name: device
+      type: keyword
+      description: The device.
+
+    - name: inode
+      type: keyword
+      description: The inode representing the file in the filesystem.
+
+    - name: uid
+      type: keyword
+      description: >
+        The user ID (UID) or security identifier (SID) of the file owner.
+
+    - name: owner
+      type: keyword
+      description: The file owner's username.
+
+    - name: gid
+      type: keyword
+      description: The primary group ID (GID) of the file.
+
+    - name: group
+      type: keyword
+      description: The primary group name of the file.
+
+    - name: mode
+      type: keyword
+      example: 0640
+      description: The mode of the file in octal representation.
+
+    - name: setuid
+      type: boolean
+      example: true
+      description: Set if the file has the `setuid` bit set. Omitted otherwise.
+
+    - name: setgid
+      type: boolean
+      example: true
+      description: Set if the file has the `setgid` bit set. Omitted otherwise.
+
+    - name: size
+      type: long
+      description: The file size in bytes (field is only added when `type` is `file`).
+
+    - name: mtime
+      type: date
+      description: The last modified time of the file (time when content was modified).
+
+    - name: ctime
+      type: date
+      description: The last change time of the file (time when metadata was changed).
+
+    - name: origin
+      type: text
+      description: >
+          An array of strings describing a possible external origin for
+          this file. For example, the URL it was downloaded from. Only
+          supported in macOS, via the kMDItemWhereFroms attribute.
+          Omitted if origin information is not available.
+      multi_fields:
+      - name: raw
+        type: keyword
+        description: >
+          This is a non-analyzed field that is useful for aggregations on the
+          origin data.
+
+    - name: selinux
+      type: group
+      description: The SELinux identity of the file.
+      fields:
+      - name: user
+        type: keyword
+        description: The owner of the object.
+      - name: role
+        type: keyword
+        description: The object's SELinux role.
+      - name: domain
+        type: keyword
+        description: The object's SELinux domain or type.
+      - name: level
+        type: keyword
+        example: s0
+        description: The object's SELinux level.

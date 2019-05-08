@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build !integration
 
 package pgsql
@@ -10,9 +27,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/publisher/beat"
 
 	"github.com/elastic/beats/packetbeat/protos"
 )
@@ -76,9 +93,7 @@ func TestPgsqlParser_simpleRequest(t *testing.T) {
 
 // Test parsing a response with data attached
 func TestPgsqlParser_dataResponse(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"pgsql", "pgsqldetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("pgsql", "pgsqldetailed"))
 
 	pgsql := pgsqlModForTests(nil)
 	data := []byte(
@@ -169,9 +184,7 @@ func TestPgsqlParser_response(t *testing.T) {
 
 // Test parsing an incomplete pgsql response
 func TestPgsqlParser_incomplete_response(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"pgsql", "pgsqldetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("pgsql", "pgsqldetailed"))
 	pgsql := pgsqlModForTests(nil)
 
 	data := []byte(
@@ -234,9 +247,7 @@ func TestPgsqlParser_threeResponses(t *testing.T) {
 
 // Test parsing an error response
 func TestPgsqlParser_errorResponse(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"pgsql", "pgsqldetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("pgsql", "pgsqldetailed"))
 
 	pgsql := pgsqlModForTests(nil)
 	data := []byte(
@@ -280,9 +291,7 @@ func TestPgsqlParser_errorResponse(t *testing.T) {
 
 // Test parsing an error response
 func TestPgsqlParser_invalidMessage(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"pgsql", "pgsqldetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("pgsql", "pgsqldetailed"))
 	pgsql := pgsqlModForTests(nil)
 	data := []byte(
 		"4300000002")
@@ -307,10 +316,12 @@ func TestPgsqlParser_invalidMessage(t *testing.T) {
 func testTCPTuple() *common.TCPTuple {
 	t := &common.TCPTuple{
 		IPLength: 4,
-		SrcIP:    net.IPv4(192, 168, 0, 1), DstIP: net.IPv4(192, 168, 0, 2),
-		SrcPort: 6512, DstPort: 5432,
+		BaseTuple: common.BaseTuple{
+			SrcIP: net.IPv4(192, 168, 0, 1), DstIP: net.IPv4(192, 168, 0, 2),
+			SrcPort: 6512, DstPort: 5432,
+		},
 	}
-	t.ComputeHashebles()
+	t.ComputeHashables()
 	return t
 }
 
@@ -329,9 +340,7 @@ func expectTransaction(t *testing.T, e *eventStore) common.MapStr {
 // Test that loss of data during the response (but not at the beginning)
 // don't cause the whole transaction to be dropped.
 func Test_gap_in_response(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"pgsql", "pgsqldetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("pgsql", "pgsqldetailed"))
 
 	store := &eventStore{}
 	pgsql := pgsqlModForTests(store)

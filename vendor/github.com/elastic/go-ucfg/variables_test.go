@@ -1,6 +1,24 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package ucfg
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +42,7 @@ func TestVarExpParserSuccess(t *testing.T) {
 		{"plain string", "string", str("string")},
 		{"string containing :", "just:a:string", str("just:a:string")},
 		{"string containing }", "abc } def", str("abc } def")},
+		{"string containging regex with $", "log$|leg$", str("log$|leg$")},
 		{"string with escaped var", "escaped $${var}", str("escaped ${var}")},
 		{"reference", "${reference}", ref("reference")},
 		{"exp in middle", "test ${splice} this",
@@ -53,18 +72,12 @@ func TestVarExpParserSuccess(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Logf("test %v: %v", test.title, test.exp)
-		actual, err := parseSplice(test.exp, ".")
-		if err != nil {
-			t.Errorf("  failed to parse with %v", err)
-			continue
-		}
-
-		t.Logf("  expected: %v", test.expected)
-		t.Logf("  actual: %v", actual)
-		if assert.Equal(t, test.expected, actual) {
-			t.Logf("  success")
-		}
+		t.Run(fmt.Sprintf("%s %s", test.title, test.exp), func(t *testing.T) {
+			actual, err := parseSplice(test.exp, ".")
+			if assert.NoError(t, err) {
+				assert.Equal(t, test.expected, actual)
+			}
+		})
 	}
 }
 
@@ -75,10 +88,10 @@ func TestVarExpParseErrors(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Logf("test %v: %v", test.title, test.exp)
-		res, err := parseSplice(test.exp, ".")
-		t.Logf("  result: %v", res)
-		t.Logf("  error: %v", err)
-		assert.True(t, err != nil)
+		t.Run(fmt.Sprintf("test %v: %v", test.title, test.exp), func(t *testing.T) {
+			res, err := parseSplice(test.exp, ".")
+			assert.True(t, err != nil)
+			assert.Error(t, err, fmt.Sprintf("result: %v, error: %v", res, err))
+		})
 	}
 }

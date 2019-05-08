@@ -7,7 +7,6 @@ import (
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/publisher/bc/publisher"
 
 	"github.com/Shopify/sarama"
 	"github.com/justsocialapps/kafkabeat/config"
@@ -17,7 +16,7 @@ import (
 type Kafkabeat struct {
 	done     chan struct{}
 	config   config.Config
-	client   publisher.Client
+	client   beat.Client
 	consumer *cluster.Consumer
 }
 
@@ -49,7 +48,13 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 func (bt *Kafkabeat) Run(b *beat.Beat) error {
 	logp.Info("kafkabeat is running! Hit CTRL-C to stop it.")
 
-	bt.client = b.Publisher.Connect()
+	var err error
+	bt.client, err = b.Publisher.ConnectWith(beat.ClientConfig{
+		PublishMode: beat.GuaranteedSend,
+	})
+	if err != nil {
+		logp.Err("Error connecting to logstash: %s", err.Error())
+	}
 
 	for {
 		select {
@@ -57,14 +62,16 @@ func (bt *Kafkabeat) Run(b *beat.Beat) error {
 			bt.consumer.Close()
 			return nil
 		case ev := <-bt.consumer.Messages():
-			event := common.MapStr{
-				"@timestamp": common.Time(time.Now()),
-				"type":       b.Info.Name,
-				"message":    string(ev.Value),
+			event := beat.Event{
+				Timestamp: time.Now(),
+				Fields: common.MapStr{
+					"type":       b.Info.Name,
+					"message":    string(ev.Value),
+				},
 			}
-			if bt.client.PublishEvent(event, publisher.Guaranteed, publisher.Sync) {
-				bt.consumer.MarkOffset(ev, "")
-			}
+			bt.client.Publish(event)
+			bt.consumer.MarkOffset(ev, "")
+			
 		case notification := <-bt.consumer.Notifications():
 			logp.Info("Rebalanced: %+v", notification)
 		case err := <-bt.consumer.Errors():

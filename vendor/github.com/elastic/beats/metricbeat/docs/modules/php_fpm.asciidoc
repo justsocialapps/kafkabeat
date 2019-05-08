@@ -3,12 +3,14 @@ This file is generated! See scripts/docs_collector.py
 ////
 
 [[metricbeat-module-php_fpm]]
-== PHP-FPM module
+== PHP_FPM module
 
 beta[]
 
 This module periodically fetches metrics from https://php-fpm.org[PHP-FPM]
 servers.
+
+The default metricset is `pool`.
 
 [float]
 === Module-specific configuration notes
@@ -34,25 +36,31 @@ location ~ /status {
 [float]
 === Compatibility
 
-The PHP-FPM metricsets were tested with PHP 7.1.1 and are expected to
+The PHP_FPM metricsets were tested with PHP 7.1.1 and are expected to
 work with all versions >= 5.
 
 
 [float]
 === Example configuration
 
-The PHP-FPM module supports the standard configuration options that are described
+The PHP_FPM module supports the standard configuration options that are described
 in <<configuration-metricbeat>>. Here is an example configuration:
 
 [source,yaml]
 ----
 metricbeat.modules:
 - module: php_fpm
-  metricsets: ["pool"]
+  metricsets:
+  - pool
+  #- process
+  enabled: true
   period: 10s
   status_path: "/status"
   hosts: ["localhost:8080"]
 ----
+
+This module supports TLS connections when using `ssl` config field, as described in <<configuration-ssl>>.
+It also supports the options described in <<module-http-config-options>>.
 
 [float]
 === Metricsets
@@ -61,5 +69,9 @@ The following metricsets are available:
 
 * <<metricbeat-metricset-php_fpm-pool,pool>>
 
+* <<metricbeat-metricset-php_fpm-process,process>>
+
 include::php_fpm/pool.asciidoc[]
+
+include::php_fpm/process.asciidoc[]
 

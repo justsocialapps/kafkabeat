@@ -1,12 +1,31 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package testing
 
 import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-colorable"
 )
 
 // ConsoleDriver outputs test result to the given stdout/stderr descriptors
@@ -26,6 +45,11 @@ func NewConsoleDriver(stdout io.Writer) *ConsoleDriver {
 // NewConsoleDriverWithKiller initializes and returns a new console driver with output file
 // Killer function will be called on fatal errors
 func NewConsoleDriverWithKiller(stdout io.Writer, killer func()) *ConsoleDriver {
+	// On Windows we must wrap file outputs with a Colorable to achieve the right
+	// escape sequences.
+	if f, ok := stdout.(*os.File); ok && runtime.GOOS == "windows" {
+		stdout = colorable.NewColorable(f)
+	}
 	return &ConsoleDriver{
 		Stdout:   stdout,
 		level:    0,

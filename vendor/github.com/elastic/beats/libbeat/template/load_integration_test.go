@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 // +build integration
 
 package template
@@ -7,15 +24,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/elastic/beats/libbeat/common"
-	"github.com/elastic/beats/libbeat/outputs/elasticsearch"
-	"github.com/elastic/beats/libbeat/version"
-
 	"github.com/stretchr/testify/assert"
+
+	"github.com/elastic/beats/libbeat/beat"
+	"github.com/elastic/beats/libbeat/common"
+	"github.com/elastic/beats/libbeat/outputs/elasticsearch/estest"
+	"github.com/elastic/beats/libbeat/version"
 )
 
 func TestCheckTemplate(t *testing.T) {
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if err := client.Connect(); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +48,7 @@ func TestCheckTemplate(t *testing.T) {
 
 func TestLoadTemplate(t *testing.T) {
 	// Setup ES
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if err := client.Connect(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,9 +61,9 @@ func TestLoadTemplate(t *testing.T) {
 	fieldsPath := absPath + "/fields.yml"
 	index := "testbeat"
 
-	tmpl, err := New(version.GetDefaultVersion(), client.GetVersion(), index, TemplateSettings{})
+	tmpl, err := New(version.GetDefaultVersion(), index, client.GetVersion(), TemplateConfig{})
 	assert.NoError(t, err)
-	content, err := tmpl.Load(fieldsPath)
+	content, err := tmpl.LoadFile(fieldsPath)
 	assert.NoError(t, err)
 
 	loader := &Loader{
@@ -73,7 +91,7 @@ func TestLoadInvalidTemplate(t *testing.T) {
 	}
 
 	// Setup ES
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if err := client.Connect(); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +141,7 @@ func TestLoadBeatsTemplate(t *testing.T) {
 		assert.Nil(t, err)
 
 		// Setup ES
-		client := elasticsearch.GetTestingElasticsearch(t)
+		client := estest.GetTestingElasticsearch(t)
 		if err := client.Connect(); err != nil {
 			t.Fatal(err)
 		}
@@ -131,9 +149,9 @@ func TestLoadBeatsTemplate(t *testing.T) {
 		fieldsPath := absPath + "/fields.yml"
 		index := beat
 
-		tmpl, err := New(version.GetDefaultVersion(), client.GetVersion(), index, TemplateSettings{})
+		tmpl, err := New(version.GetDefaultVersion(), index, client.GetVersion(), TemplateConfig{})
 		assert.NoError(t, err)
-		content, err := tmpl.Load(fieldsPath)
+		content, err := tmpl.LoadFile(fieldsPath)
 		assert.NoError(t, err)
 
 		loader := &Loader{
@@ -157,7 +175,7 @@ func TestLoadBeatsTemplate(t *testing.T) {
 
 func TestTemplateSettings(t *testing.T) {
 	// Setup ES
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if err := client.Connect(); err != nil {
 		t.Fatal(err)
 	}
@@ -177,9 +195,12 @@ func TestTemplateSettings(t *testing.T) {
 			"enabled": false,
 		},
 	}
-	tmpl, err := New(version.GetDefaultVersion(), client.GetVersion(), "testbeat", settings)
+	config := TemplateConfig{
+		Settings: settings,
+	}
+	tmpl, err := New(version.GetDefaultVersion(), "testbeat", client.GetVersion(), config)
 	assert.NoError(t, err)
-	content, err := tmpl.Load(fieldsPath)
+	content, err := tmpl.LoadFile(fieldsPath)
 	assert.NoError(t, err)
 
 	loader := &Loader{
@@ -196,7 +217,7 @@ func TestTemplateSettings(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, val.(string), "1")
 
-	val, err = templateJSON.GetValue("mappings._default_._source.enabled")
+	val, err = templateJSON.GetValue("mappings.doc._source.enabled")
 	assert.NoError(t, err)
 	assert.Equal(t, val.(bool), false)
 
@@ -209,16 +230,17 @@ func TestTemplateSettings(t *testing.T) {
 
 func TestOverwrite(t *testing.T) {
 	// Setup ES
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 	if err := client.Connect(); err != nil {
 		t.Fatal(err)
 	}
 
-	beatInfo := common.BeatInfo{
-		Beat:    "testbeat",
-		Version: version.GetDefaultVersion(),
+	beatInfo := beat.Info{
+		Beat:        "testbeat",
+		IndexPrefix: "testbeatidx",
+		Version:     version.GetDefaultVersion(),
 	}
-	templateName := "testbeat-" + version.GetDefaultVersion()
+	templateName := "testbeatidx-" + version.GetDefaultVersion()
 
 	absPath, err := filepath.Abs("../")
 	assert.NotNil(t, absPath)
@@ -232,7 +254,7 @@ func TestOverwrite(t *testing.T) {
 		Enabled: true,
 		Fields:  absPath + "/fields.yml",
 	})
-	loader, err := NewLoader(config, client, beatInfo)
+	loader, err := NewLoader(config, client, beatInfo, nil)
 	assert.NoError(t, err)
 	err = loader.Load()
 	assert.NoError(t, err)
@@ -247,14 +269,14 @@ func TestOverwrite(t *testing.T) {
 			},
 		},
 	})
-	loader, err = NewLoader(config, client, beatInfo)
+	loader, err = NewLoader(config, client, beatInfo, nil)
 	assert.NoError(t, err)
 	err = loader.Load()
 	assert.NoError(t, err)
 
 	// Overwrite was not enabled, so the first version should still be there
 	templateJSON := getTemplate(t, client, templateName)
-	_, err = templateJSON.GetValue("mappings._default_._source.enabled")
+	_, err = templateJSON.GetValue("mappings.doc._source.enabled")
 	assert.Error(t, err)
 
 	// Load template again, this time with custom settings AND overwrite: true
@@ -268,14 +290,14 @@ func TestOverwrite(t *testing.T) {
 			},
 		},
 	})
-	loader, err = NewLoader(config, client, beatInfo)
+	loader, err = NewLoader(config, client, beatInfo, nil)
 	assert.NoError(t, err)
 	err = loader.Load()
 	assert.NoError(t, err)
 
 	// Overwrite was enabled, so the custom setting should be there
 	templateJSON = getTemplate(t, client, templateName)
-	val, err := templateJSON.GetValue("mappings._default_._source.enabled")
+	val, err := templateJSON.GetValue("mappings.doc._source.enabled")
 	assert.NoError(t, err)
 	assert.Equal(t, val.(bool), false)
 
@@ -332,11 +354,11 @@ func TestTemplateWithData(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Setup ES
-	client := elasticsearch.GetTestingElasticsearch(t)
+	client := estest.GetTestingElasticsearch(t)
 
-	tmpl, err := New(version.GetDefaultVersion(), client.GetVersion(), "testindex", TemplateSettings{})
+	tmpl, err := New(version.GetDefaultVersion(), "testindex", client.GetVersion(), TemplateConfig{})
 	assert.NoError(t, err)
-	content, err := tmpl.Load(fieldsPath)
+	content, err := tmpl.LoadFile(fieldsPath)
 	assert.NoError(t, err)
 
 	loader := &Loader{

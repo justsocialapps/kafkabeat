@@ -1,6 +1,8 @@
+import hashlib
 import os
 import platform
 import sys
+import yaml
 
 if sys.platform.startswith("win"):
     import win32api
@@ -13,6 +15,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../../../libbeat/tests/
 
 from beat.beat import TestCase
 
+PROVIDER = "WinlogbeatTestPython"
+APP_NAME = "SystemTest"
+OTHER_APP_NAME = "OtherSystemTestApp"
+
 
 class BaseTest(TestCase):
 
@@ -24,15 +30,24 @@ class BaseTest(TestCase):
 
 
 class WriteReadTest(BaseTest):
-    providerName = "WinlogbeatTestPython"
-    applicationName = "SystemTest"
-    otherAppName = "OtherSystemTestApp"
+    providerName = PROVIDER
+    applicationName = APP_NAME
+    otherAppName = OTHER_APP_NAME
+    testSuffix = None
     sid = None
     sidString = None
     api = None
 
     def setUp(self):
         super(WriteReadTest, self).setUp()
+
+        # Every test will use its own event log and application names to ensure
+        # isolation.
+        self.testSuffix = "_" + hashlib.sha256(self.api + self._testMethodName).hexdigest()[:5]
+        self.providerName = PROVIDER + self.testSuffix
+        self.applicationName = APP_NAME + self.testSuffix
+        self.otherAppName = OTHER_APP_NAME + self.testSuffix
+
         win32evtlogutil.AddSourceToRegistry(self.applicationName,
                                             "%systemroot%\\system32\\EventCreate.exe",
                                             self.providerName)
@@ -92,12 +107,30 @@ class WriteReadTest(BaseTest):
         proc = self.start_beat()
         self.wait_until(lambda: self.output_has(expected_events))
         proc.check_kill_and_wait()
-
         return self.read_output()
+
+    def read_registry(self, requireBookmark=False):
+        f = open(os.path.join(self.working_dir, "data", ".winlogbeat.yml"), "r")
+        data = yaml.load(f)
+        self.assertIn("update_time", data)
+        self.assertIn("event_logs", data)
+
+        event_logs = {}
+        for event_log in data["event_logs"]:
+            self.assertIn("name", event_log)
+            self.assertIn("record_number", event_log)
+            self.assertIn("timestamp", event_log)
+            if requireBookmark:
+                self.assertIn("bookmark", event_log)
+            name = event_log["name"]
+            event_logs[name] = event_log
+
+        return event_logs
 
     def assert_common_fields(self, evt, msg=None, eventID=10, sid=None,
                              level="Information", extra=None):
-        assert evt["computer_name"].lower() == platform.node().lower()
+
+        assert host_name(evt["computer_name"]).lower() == host_name(platform.node()).lower()
         assert "record_number" in evt
         self.assertDictContainsSubset({
             "event_id": eventID,
@@ -126,3 +159,7 @@ class WriteReadTest(BaseTest):
 
         if extra != None:
             self.assertDictContainsSubset(extra, evt)
+
+
+def host_name(fqdn):
+    return fqdn.split('.')[0]

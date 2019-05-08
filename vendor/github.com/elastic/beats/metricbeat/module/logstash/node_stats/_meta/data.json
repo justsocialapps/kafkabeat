@@ -1,0 +1,28 @@
+{
+    "@timestamp": "2017-10-12T08:05:34.853Z",
+    "agent": {
+        "hostname": "host.example.com",
+        "name": "host.example.com"
+    },
+    "logstash": {
+        "node": {
+            "stats": {
+                "events": {
+                    "filtered": 30750,
+                    "in": 1,
+                    "out": 30750
+                }
+            }
+        }
+    },
+    "metricset": {
+        "host": "127.0.0.1:9600",
+        "module": "logstash",
+        "name": "node_stats",
+        "namespace": "logstash.node.stats",
+        "rtt": 115
+    },
+    "service": {
+        "name": "logstash"
+    }
+}

@@ -1,3 +1,20 @@
+// Licensed to Elasticsearch B.V. under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Elasticsearch B.V. licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 package amqp
 
 import (
@@ -7,9 +24,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/publisher/beat"
+
 	"github.com/elastic/beats/packetbeat/protos"
 )
 
@@ -32,10 +50,12 @@ func amqpModForTests() (*eventStore, *amqpPlugin) {
 func testTCPTuple() *common.TCPTuple {
 	t := &common.TCPTuple{
 		IPLength: 4,
-		SrcIP:    net.IPv4(192, 168, 0, 1), DstIP: net.IPv4(192, 168, 0, 2),
-		SrcPort: 6512, DstPort: 3306,
+		BaseTuple: common.BaseTuple{
+			SrcIP: net.IPv4(192, 168, 0, 1), DstIP: net.IPv4(192, 168, 0, 2),
+			SrcPort: 6512, DstPort: 3306,
+		},
 	}
-	t.ComputeHashebles()
+	t.ComputeHashables()
 	return t
 }
 
@@ -51,9 +71,7 @@ func expectTransaction(t *testing.T, e *eventStore) common.MapStr {
 }
 
 func TestAmqp_UnknownMethod(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -71,9 +89,7 @@ func TestAmqp_UnknownMethod(t *testing.T) {
 }
 
 func TestAmqp_FrameSize(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -92,10 +108,30 @@ func TestAmqp_FrameSize(t *testing.T) {
 	}
 }
 
-func TestAmqp_WrongShortStringSize(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
+// Test that the parser doesn't panic on a partial message that includes
+// a client header
+func TestAmqp_PartialFrameSize(t *testing.T) {
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
+
+	_, amqp := amqpModForTests()
+
+	//incomplete frame
+	data, err := hex.DecodeString("414d515000060606010000000000")
+	assert.Nil(t, err)
+
+	stream := &amqpStream{data: data, message: new(amqpMessage)}
+	ok, complete := amqp.amqpMessageParser(stream)
+
+	if !ok {
+		t.Errorf("Parsing should not raise an error")
 	}
+	if complete {
+		t.Errorf("message should not be complete")
+	}
+}
+
+func TestAmqp_WrongShortStringSize(t *testing.T) {
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -112,9 +148,7 @@ func TestAmqp_WrongShortStringSize(t *testing.T) {
 }
 
 func TestAmqp_QueueDeclaration(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -146,9 +180,7 @@ func TestAmqp_QueueDeclaration(t *testing.T) {
 }
 
 func TestAmqp_ExchangeDeclaration(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -181,9 +213,7 @@ func TestAmqp_ExchangeDeclaration(t *testing.T) {
 }
 
 func TestAmqp_BasicConsume(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -216,9 +246,7 @@ func TestAmqp_BasicConsume(t *testing.T) {
 }
 
 func TestAmqp_ExchangeDeletion(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -246,9 +274,7 @@ func TestAmqp_ExchangeDeletion(t *testing.T) {
 
 //this method is exclusive to RabbitMQ
 func TestAmqp_ExchangeBind(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -281,9 +307,7 @@ func TestAmqp_ExchangeBind(t *testing.T) {
 
 //this method is exclusive to RabbitMQ
 func TestAmqp_ExchangeUnbindTransaction(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -318,9 +342,7 @@ func TestAmqp_ExchangeUnbindTransaction(t *testing.T) {
 }
 
 func TestAmqp_PublishMessage(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -369,9 +391,7 @@ func TestAmqp_PublishMessage(t *testing.T) {
 }
 
 func TestAmqp_DeliverMessage(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendResponse = true
@@ -417,9 +437,7 @@ func TestAmqp_DeliverMessage(t *testing.T) {
 }
 
 func TestAmqp_MessagePropertiesFields(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 	amqp.sendResponse = true
@@ -463,9 +481,7 @@ func TestAmqp_MessagePropertiesFields(t *testing.T) {
 }
 
 func TestAmqp_ChannelError(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -512,9 +528,7 @@ func TestAmqp_ChannelError(t *testing.T) {
 }
 
 func TestAmqp_NoWaitQueueDeleteMethod(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -546,9 +560,7 @@ func TestAmqp_NoWaitQueueDeleteMethod(t *testing.T) {
 }
 
 func TestAmqp_RejectMessage(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -578,9 +590,7 @@ func TestAmqp_RejectMessage(t *testing.T) {
 }
 
 func TestAmqp_GetEmptyMethod(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -607,9 +617,7 @@ func TestAmqp_GetEmptyMethod(t *testing.T) {
 }
 
 func TestAmqp_GetMethod(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -641,9 +649,7 @@ func TestAmqp_GetMethod(t *testing.T) {
 }
 
 func TestAmqp_MaxBodyLength(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.maxBodyLength = 10
@@ -712,9 +718,7 @@ func TestAmqp_MaxBodyLength(t *testing.T) {
 }
 
 func TestAmqp_HideArguments(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -775,9 +779,7 @@ func TestAmqp_HideArguments(t *testing.T) {
 }
 
 func TestAmqp_RecoverMethod(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true
@@ -805,9 +807,7 @@ func TestAmqp_RecoverMethod(t *testing.T) {
 
 //this is a specific rabbitMQ method
 func TestAmqp_BasicNack(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -830,9 +830,7 @@ func TestAmqp_BasicNack(t *testing.T) {
 }
 
 func TestAmqp_GetTable(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -891,9 +889,7 @@ func TestAmqp_GetTable(t *testing.T) {
 }
 
 func TestAmqp_TableInception(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -945,9 +941,7 @@ func TestAmqp_TableInception(t *testing.T) {
 }
 
 func TestAmqp_ArrayFields(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -1024,9 +1018,7 @@ func TestAmqp_ArrayFields(t *testing.T) {
 }
 
 func TestAmqp_WrongTable(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	_, amqp := amqpModForTests()
 
@@ -1098,9 +1090,7 @@ func TestAmqp_isError(t *testing.T) {
 }
 
 func TestAmqp_ChannelCloseErrorMethod(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 
@@ -1129,9 +1119,7 @@ func TestAmqp_ChannelCloseErrorMethod(t *testing.T) {
 }
 
 func TestAmqp_ConnectionCloseNoError(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.hideConnectionInformation = false
@@ -1163,9 +1151,7 @@ func TestAmqp_ConnectionCloseNoError(t *testing.T) {
 }
 
 func TestAmqp_MultipleBodyFrames(t *testing.T) {
-	if testing.Verbose() {
-		logp.LogInit(logp.LOG_DEBUG, "", false, true, []string{"amqp", "amqpdetailed"})
-	}
+	logp.TestingSetup(logp.WithSelectors("amqp", "amqpdetailed"))
 
 	results, amqp := amqpModForTests()
 	amqp.sendRequest = true

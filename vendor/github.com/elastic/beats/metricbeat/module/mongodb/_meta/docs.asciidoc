@@ -1,5 +1,3 @@
-== MongoDB module
-
 This module periodically fetches metrics from https://www.mongodb.com[MongoDB]
 servers.
 
@@ -41,6 +39,8 @@ over the username and password configuration options.
   username: root
   password: test
 ----
+
+The default metricsets are `collstats`, `dbstats` and `status`.
 
 [float]
 === Compatibility

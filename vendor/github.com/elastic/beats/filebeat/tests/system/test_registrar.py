@@ -5,6 +5,8 @@ import os
 import platform
 import time
 import shutil
+import stat
+import unittest
 
 from filebeat import BaseTest
 from nose.plugins.skip import SkipTest
@@ -69,6 +71,7 @@ class Test(BaseTest):
             "offset": iterations * line_len,
         }, record)
         self.assertTrue("FileStateOS" in record)
+        self.assertIsNone(record["meta"])
         file_state_os = record["FileStateOS"]
 
         if os.name == "nt":
@@ -160,6 +163,135 @@ class Test(BaseTest):
         filebeat.check_kill_and_wait()
 
         assert os.path.isfile(os.path.join(self.working_dir, "a/b/c/registry"))
+
+    def test_registry_file_default_permissions(self):
+        """
+        Test that filebeat default registry permission is set
+        """
+
+        if os.name == "nt":
+            # This test is currently skipped on windows because file permission
+            # configuration isn't implemented on Windows yet
+            raise SkipTest
+
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            registryFile="a/b/c/registry",
+        )
+        os.mkdir(self.working_dir + "/log/")
+        testfile_path = self.working_dir + "/log/test.log"
+        with open(testfile_path, 'w') as testfile:
+            testfile.write("hello world\n")
+        filebeat = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=15)
+        # wait until the registry file exist. Needed to avoid a race between
+        # the logging and actual writing the file. Seems to happen on Windows.
+        self.wait_until(
+            lambda: os.path.isfile(os.path.join(self.working_dir,
+                                                "a/b/c/registry")),
+            max_timeout=1)
+        filebeat.check_kill_and_wait()
+
+        registry_file_perm_mask = oct(stat.S_IMODE(os.lstat(os.path.join(self.working_dir,
+                                                                         "a/b/c/registry")).st_mode))
+        self.assertEqual(registry_file_perm_mask, "0600")
+
+    def test_registry_file_custom_permissions(self):
+        """
+        Test that filebeat registry permission is set as per configuration
+        """
+
+        if os.name == "nt":
+            # This test is currently skipped on windows because file permission
+            # configuration isn't implemented on Windows yet
+            raise SkipTest
+
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            registryFile="a/b/c/registry",
+            registryFilePermissions=0644
+        )
+        os.mkdir(self.working_dir + "/log/")
+        testfile_path = self.working_dir + "/log/test.log"
+        with open(testfile_path, 'w') as testfile:
+            testfile.write("hello world\n")
+        filebeat = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=15)
+        # wait until the registry file exist. Needed to avoid a race between
+        # the logging and actual writing the file. Seems to happen on Windows.
+        self.wait_until(
+            lambda: os.path.isfile(os.path.join(self.working_dir,
+                                                "a/b/c/registry")),
+            max_timeout=1)
+        filebeat.check_kill_and_wait()
+
+        registry_file_perm_mask = oct(stat.S_IMODE(os.lstat(os.path.join(self.working_dir,
+                                                                         "a/b/c/registry")).st_mode))
+        self.assertEqual(registry_file_perm_mask, "0644")
+
+    def test_registry_file_update_permissions(self):
+        """
+        Test that filebeat registry permission is updated along with configuration
+        """
+
+        if os.name == "nt":
+            # This test is currently skipped on windows because file permission
+            # configuration isn't implemented on Windows yet
+            raise SkipTest
+
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            registryFile="a/b/c/registry_x",
+        )
+        os.mkdir(self.working_dir + "/log/")
+        testfile_path = self.working_dir + "/log/test.log"
+        with open(testfile_path, 'w') as testfile:
+            testfile.write("hello world\n")
+        filebeat = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=15)
+        # wait until the registry file exist. Needed to avoid a race between
+        # the logging and actual writing the file. Seems to happen on Windows.
+        self.wait_until(
+            lambda: os.path.isfile(os.path.join(self.working_dir,
+                                                "a/b/c/registry_x")),
+            max_timeout=1)
+        filebeat.check_kill_and_wait()
+
+        registry_file_perm_mask = oct(stat.S_IMODE(os.lstat(os.path.join(self.working_dir,
+                                                                         "a/b/c/registry_x")).st_mode))
+        self.assertEqual(registry_file_perm_mask, "0600")
+
+        self.render_config_template(
+            path=os.path.abspath(self.working_dir) + "/log/*",
+            registryFile="a/b/c/registry_x",
+            registryFilePermissions=0644
+        )
+
+        filebeat = self.start_beat()
+        self.wait_until(
+            lambda: self.output_has(lines=1),
+            max_timeout=15)
+        # wait until the registry file exist. Needed to avoid a race between
+        # the logging and actual writing the file. Seems to happen on Windows.
+        self.wait_until(
+            lambda: os.path.isfile(os.path.join(self.working_dir,
+                                                "a/b/c/registry_x")),
+            max_timeout=1)
+
+        # Wait a moment to make sure registry is completely written
+        time.sleep(1)
+
+        filebeat.check_kill_and_wait()
+
+        registry_file_perm_mask = oct(stat.S_IMODE(os.lstat(os.path.join(self.working_dir,
+                                                                         "a/b/c/registry_x")).st_mode))
+        self.assertEqual(registry_file_perm_mask, "0644")
 
     def test_rotating_file(self):
         """
@@ -347,7 +479,7 @@ class Test(BaseTest):
             lambda: self.output_has(lines=1),
             max_timeout=10)
 
-        # Wait a momemt to make sure registry is completely written
+        # Wait a moment to make sure registry is completely written
         time.sleep(1)
 
         assert os.stat(testfile_path).st_ino == self.get_registry_entry_by_path(
@@ -417,7 +549,7 @@ class Test(BaseTest):
             lambda: self.output_has(lines=1),
             max_timeout=10)
 
-        # Wait a momemt to make sure registry is completely written
+        # Wait a moment to make sure registry is completely written
         time.sleep(1)
 
         data = self.get_registry()
@@ -440,7 +572,7 @@ class Test(BaseTest):
                 "Updating state for renamed file"),
             max_timeout=10)
 
-        # Wait a momemt to make sure registry is completely written
+        # Wait a moment to make sure registry is completely written
         time.sleep(1)
 
         data = self.get_registry()
@@ -631,7 +763,7 @@ class Test(BaseTest):
                 "Registry file updated. 2 states written.") >= 1,
             max_timeout=15)
 
-        # Wait a momemt to make sure registry is completely written
+        # Wait a moment to make sure registry is completely written
         time.sleep(1)
         filebeat.kill_and_wait()
 
@@ -678,14 +810,13 @@ class Test(BaseTest):
             lambda: self.log_contains_count("Registry file updated") > 1,
             max_timeout=15)
 
-        if os.name == "nt":
-            # On windows registry recreation can take a bit longer
-            time.sleep(1)
+        # Syncing file on disk is always susceptible to timing issues.
+        time.sleep(1)
 
         data = self.get_registry()
         assert len(data) == 2
 
-        # Wait until states are removed from prospectors
+        # Wait until states are removed from inputs
         self.wait_until(
             lambda: self.log_contains_count(
                 "State removed for") == 2,
@@ -699,7 +830,7 @@ class Test(BaseTest):
             lambda: self.output_has(lines=3),
             max_timeout=30)
 
-        # Wait until states are removed from prospectors
+        # Wait until states are removed from inputs
         self.wait_until(
             lambda: self.log_contains_count(
                 "State removed for") >= 3,
@@ -717,10 +848,12 @@ class Test(BaseTest):
         else:
             assert data[0]["offset"] == 2
 
+    @unittest.skip("Skipped as flaky: https://github.com/elastic/beats/issues/7690")
     def test_clean_removed(self):
         """
         Checks that files which were removed, the state is removed
         """
+
         self.render_config_template(
             path=os.path.abspath(self.working_dir) + "/log/input*",
             scan_frequency="0.1s",
@@ -745,24 +878,16 @@ class Test(BaseTest):
             max_timeout=10)
 
         # Wait until registry file is created
-        self.wait_until(
-            lambda: self.log_contains_count("Registry file updated") > 1,
-            max_timeout=15)
+        self.wait_until(lambda: self.log_contains_count("Registry file updated") > 1)
 
-        if os.name == "nt":
-            # On windows registry recration can take a bit longer
-            time.sleep(1)
-
-        data = self.get_registry()
-        assert len(data) == 2
+        # Wait until registry is updated
+        self.wait_until(lambda: len(self.get_registry()) == 2)
+        assert len(self.get_registry()) == 2
 
         os.remove(testfile_path1)
 
-        # Wait until states are removed from prospectors
-        self.wait_until(
-            lambda: self.log_contains(
-                "Remove state for file as file removed"),
-            max_timeout=15)
+        # Wait until states are removed from inputs
+        self.wait_until(lambda: self.log_contains("Remove state for file as file removed"))
 
         # Add one more line to make sure registry is written
         with open(testfile_path2, 'a') as testfile2:
@@ -771,6 +896,9 @@ class Test(BaseTest):
         self.wait_until(
             lambda: self.output_has(lines=3),
             max_timeout=10)
+
+        # Make sure all states are cleaned up
+        self.wait_until(lambda: self.log_contains("Before: 1, After: 1, Pending: 0"))
 
         filebeat.check_kill_and_wait()
 
@@ -815,7 +943,7 @@ class Test(BaseTest):
 
         # Wait until registry file is created
         self.wait_until(
-            lambda: self.log_contains_count("Registry file updated") > 1,
+            lambda: self.log_contains_count("Registry file updated. 2 states written.") > 0,
             max_timeout=15)
 
         data = self.get_registry()
@@ -823,21 +951,16 @@ class Test(BaseTest):
 
         os.remove(testfile_path1)
 
-        # Wait until states are removed from prospectors
-        self.wait_until(
-            lambda: self.log_contains(
-                "Remove state for file as file removed"),
-            max_timeout=15)
+        # Wait until states are removed from inputs
+        self.wait_until(lambda: self.log_contains("Remove state for file as file removed"))
 
         # Add one more line to make sure registry is written
         with open(testfile_path2, 'a') as testfile2:
             testfile2.write("make sure registry is written\n")
 
-        self.wait_until(
-            lambda: self.output_has(lines=3),
-            max_timeout=10)
-
-        time.sleep(3)
+        self.wait_until(lambda: self.output_has(lines=3))
+        # Check is > as the same log line might happen before but afterwards it is repeated
+        self.wait_until(lambda: self.log_contains_count("Before: 1, After: 1, Pending: 1") > 5)
 
         filebeat.check_kill_and_wait()
 
@@ -871,7 +994,7 @@ class Test(BaseTest):
 
         # Make sure states written appears one more time
         self.wait_until(
-            lambda: self.log_contains("CRIT Exiting: Registry file path must be a file"),
+            lambda: self.log_contains("Exiting: Registry file path must be a file"),
             max_timeout=10)
 
         filebeat.check_kill_and_wait(exit_code=1)
@@ -904,7 +1027,7 @@ class Test(BaseTest):
 
         # Make sure states written appears one more time
         self.wait_until(
-            lambda: self.log_contains("CRIT Exiting: Registry file path is not a regular file"),
+            lambda: self.log_contains("Exiting: Registry file path is not a regular file"),
             max_timeout=10)
 
         filebeat.check_kill_and_wait(exit_code=1)
@@ -934,7 +1057,7 @@ class Test(BaseTest):
         # Make sure states written appears one more time
         self.wait_until(
             lambda: self.log_contains(
-                "CRIT Exiting: Could not start registrar: Error loading state"),
+                "Exiting: Could not start registrar: Error loading state"),
             max_timeout=10)
 
         filebeat.check_kill_and_wait(exit_code=1)
@@ -988,20 +1111,20 @@ class Test(BaseTest):
         # Make sure all 4 states are persisted
         self.wait_until(
             lambda: self.log_contains(
-                "Prospector states cleaned up. Before: 4, After: 4", logfile="filebeat2.log"),
+                "input states cleaned up. Before: 4, After: 4", logfile="filebeat2.log"),
             max_timeout=10)
 
         # Wait until registry file is cleaned
         self.wait_until(
             lambda: self.log_contains(
-                "Prospector states cleaned up. Before: 0, After: 0", logfile="filebeat2.log"),
+                "input states cleaned up. Before: 0, After: 0", logfile="filebeat2.log"),
             max_timeout=10)
 
         filebeat.check_kill_and_wait()
 
     def test_restart_state_reset(self):
         """
-        Test that ttl is set to -1 after restart and no prospector covering it
+        Test that ttl is set to -1 after restart and no inputs covering it
         """
 
         self.render_config_template(
@@ -1039,10 +1162,10 @@ class Test(BaseTest):
 
         filebeat = self.start_beat(output="filebeat2.log")
 
-        # Wait until prospectors are started
+        # Wait until inputs are started
         self.wait_until(
             lambda: self.log_contains_count(
-                "Starting prospector of type: log", logfile="filebeat2.log") >= 1,
+                "Starting input of type: log", logfile="filebeat2.log") >= 1,
             max_timeout=10)
 
         filebeat.check_kill_and_wait()
@@ -1205,7 +1328,7 @@ class Test(BaseTest):
 
         filebeat = self.start_beat(output="filebeat2.log")
 
-        # Wait until prospectors are started
+        # Wait until inputs are started
         self.wait_until(
             lambda: self.log_contains("Registry file updated",
                                       logfile="filebeat2.log"), max_timeout=10)
@@ -1309,14 +1432,14 @@ class Test(BaseTest):
         data = self.get_registry()
         assert len(data) == 0
 
-    def test_registrar_files_with_prospector_level_processors(self):
+    def test_registrar_files_with_input_level_processors(self):
         """
         Check that multiple files are put into registrar file with drop event processor
         """
 
         self.render_config_template(
             path=os.path.abspath(self.working_dir) + "/log/*",
-            prospector_processors=[{
+            input_processors=[{
                 "drop_event": {},
             }]
         )
@@ -1346,7 +1469,7 @@ class Test(BaseTest):
                                                 "registry")),
             max_timeout=10)
 
-        # Wait a momemt to make sure registry is completely written
+        # Wait a moment to make sure registry is completely written
         time.sleep(2)
 
         filebeat.check_kill_and_wait()
@@ -1385,7 +1508,57 @@ class Test(BaseTest):
                 "device": stat.st_dev,
             }, file_state_os)
 
+    def test_registrar_meta(self):
+        """
+        Check that multiple entries for the same file are on the registry when they have
+        different meta
+        """
 
-if __name__ == '__main__':
-    import unittest
-    unittest.main()
+        self.render_config_template(
+            type='docker',
+            input_raw='''
+  containers:
+    path: {path}
+    stream: stdout
+    ids:
+      - container_id
+- type: docker
+  containers:
+    path: {path}
+    stream: stderr
+    ids:
+      - container_id
+            '''.format(path=os.path.abspath(self.working_dir) + "/log/")
+        )
+        os.mkdir(self.working_dir + "/log/")
+        os.mkdir(self.working_dir + "/log/container_id")
+        testfile_path1 = self.working_dir + "/log/container_id/test.log"
+
+        with open(testfile_path1, 'w') as f:
+            for i in range(0, 10):
+                f.write('{"log":"hello\\n","stream":"stdout","time":"2018-04-13T13:39:57.924216596Z"}\n')
+                f.write('{"log":"hello\\n","stream":"stderr","time":"2018-04-13T13:39:57.924216596Z"}\n')
+
+        filebeat = self.start_beat()
+
+        self.wait_until(
+            lambda: self.output_has(lines=20),
+            max_timeout=15)
+
+        # wait until the registry file exist. Needed to avoid a race between
+        # the logging and actual writing the file. Seems to happen on Windows.
+
+        self.wait_until(
+            lambda: os.path.isfile(os.path.join(self.working_dir,
+                                                "registry")),
+            max_timeout=1)
+
+        filebeat.check_kill_and_wait()
+
+        # Check registry contains 2 entries with meta
+        data = self.get_registry()
+        assert len(data) == 2
+        assert data[0]["source"] == data[1]["source"]
+        assert data[0]["meta"]["stream"] in ("stdout", "stderr")
+        assert data[1]["meta"]["stream"] in ("stdout", "stderr")
+        assert data[0]["meta"]["stream"] != data[1]["meta"]["stream"]
