@@ -32,8 +32,8 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 	kafkaConfig.Group.Return.Notifications = true
 	kafkaConfig.Config.ClientID = "kafkabeat"
 	kafkaConfig.Config.Consumer.Offsets.Initial = sarama.OffsetOldest
-	kafkaConfig.Config.Consumer.MaxWaitTime = 500 *time.Millisecond
-	kafkaConfig.Config.Consumer.MaxProcessingTime = 5000 *time.Millisecond
+	kafkaConfig.Config.Consumer.MaxWaitTime = 500 * time.Millisecond
+	kafkaConfig.Config.Consumer.MaxProcessingTime = 5000 * time.Millisecond
 
 	consumer, err := cluster.NewConsumer(config.Brokers, config.Group, config.Topics, kafkaConfig)
 	if err != nil {
